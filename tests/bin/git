@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "$1" == "-C" && "$3" == "rev-parse" && "$4" == "HEAD" ]]; then
+  printf '%s\n' "${MOCK_GIT_HEAD:?MOCK_GIT_HEAD is required}"
+  exit 0
+fi
+
+command git "$@"

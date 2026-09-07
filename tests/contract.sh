@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TMP_DIR=$(mktemp -d)
+
+export PATH="$ROOT/tests/bin:$PATH"
+export FIXTURE_DIR="$ROOT/tests/fixtures"
+export HAWK_BASE_URL='https://hawk.example'
+export HAWK_BUILDBOX_TOKEN='contract-token'
+export BUILDBOX_STATE_DIR="$TMP_DIR/state"
+export CURL_LOG="$TMP_DIR/curl.log"
+export FLUTTER_LOG="$TMP_DIR/flutter.log"
+export GITHUB_WORKSPACE="$TMP_DIR/workspace"
+export GITHUB_OUTPUT="$TMP_DIR/github-output.log"
+export BUILDBOX_GITHUB_RUN_ID=987654321
+
+mkdir -p "$GITHUB_WORKSPACE/aviary-source/.git"
+mkdir -p "$GITHUB_WORKSPACE/aviary-source/waterfowl/apps/swan"
+mkdir -p "$BUILDBOX_STATE_DIR"
+
+assert_file_contains() {
+  local file=$1
+  local expected=$2
+  if ! grep -F -- "$expected" "$file" >/dev/null; then
+    printf 'expected %s to contain %s\n' "$file" "$expected" >&2
+    exit 1
+  fi
+}
+
+assert_file_not_contains() {
+  local file=$1
+  local unexpected=$2
+  if grep -F -- "$unexpected" "$file" >/dev/null; then
+    printf 'expected %s not to contain %s\n' "$file" "$unexpected" >&2
+    exit 1
+  fi
+}
+
+export MOCK_GIT_HEAD='1111111111111111111111111111111111111111'
+"$ROOT/scripts/load-build-spec" spec-apk-1
+"$ROOT/scripts/report-result" running
+"$ROOT/scripts/build-android"
+"$ROOT/scripts/upload-oss"
+"$ROOT/scripts/report-result" succeeded
+
+source "$BUILDBOX_STATE_DIR/spec.env"
+source "$BUILDBOX_STATE_DIR/artifacts.env"
+
+[[ "$BUILDBOX_TARGETS" == "android_apk,android_aab" ]]
+[[ "$BUILDBOX_CHECKOUT_REPOSITORY" == "boxliy/aviary" ]]
+[[ "$(jq 'length' "$BUILDBOX_ARTIFACTS_JSON")" == "2" ]]
+assert_file_contains "$GITHUB_OUTPUT" "checkout_repository=boxliy/aviary"
+assert_file_contains "$GITHUB_OUTPUT" "commit_sha=1111111111111111111111111111111111111111"
+assert_file_contains "$GITHUB_OUTPUT" "targets=android_apk,android_aab"
+assert_file_contains "$FLUTTER_LOG" "build apk --release"
+assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
+assert_file_contains "$CURL_LOG" "https://oss.example/upload.apk"
+assert_file_contains "$CURL_LOG" "https://oss.example/upload.aab"
+assert_file_contains "$CURL_LOG" "/api/v1/buildbox/runs/run-apk-1/callback"
+assert_file_not_contains "$CURL_LOG" "contract-token"
+jq -e '
+  .status == "running" and
+  .githubRunId == 987654321 and
+  .artifacts == [] and
+  ((keys | sort) == ["artifacts", "githubRunId", "status"])
+' "$BUILDBOX_STATE_DIR/callback-running.json" >/dev/null
+jq -e '
+  .status == "succeeded" and
+  .githubRunId == 987654321 and
+  (.artifacts | length) == 2 and
+  ((keys | sort) == ["artifacts", "githubRunId", "status"]) and
+  (any(.artifacts[]; .target == "android_apk" and .fileName == "swan-release.apk" and .contentType == "application/vnd.android.package-archive" and .objectKey == "builds/spec-apk-1/android_apk.apk" and .byteSize == 13 and (.sha256 | test("^sha256:[0-9a-f]{64}$")))) and
+  (any(.artifacts[]; .target == "android_aab" and .fileName == "swan-release.aab" and .contentType == "application/octet-stream" and .objectKey == "builds/spec-apk-1/android_aab.aab" and .byteSize == 13 and (.sha256 | test("^sha256:[0-9a-f]{64}$"))))
+' "$BUILDBOX_STATE_DIR/callback-succeeded.json" >/dev/null
+
+CURL_LOG="$TMP_DIR/curl-aab.log"
+FLUTTER_LOG="$TMP_DIR/flutter-aab.log"
+BUILDBOX_STATE_DIR="$TMP_DIR/state-aab"
+GITHUB_OUTPUT="$TMP_DIR/github-output-aab.log"
+export CURL_LOG FLUTTER_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
+mkdir -p "$BUILDBOX_STATE_DIR"
+
+export MOCK_GIT_HEAD='2222222222222222222222222222222222222222'
+"$ROOT/scripts/load-build-spec" spec-aab-1
+"$ROOT/scripts/build-android"
+"$ROOT/scripts/upload-oss"
+"$ROOT/scripts/report-result" succeeded
+assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
+assert_file_contains "$CURL_LOG" "https://oss.example/upload.aab"
+assert_file_contains "$GITHUB_OUTPUT" "checkout_repository=boxliy/aviary"
+
+CURL_LOG="$TMP_DIR/curl-mismatch.log"
+BUILDBOX_STATE_DIR="$TMP_DIR/state-mismatch"
+GITHUB_OUTPUT="$TMP_DIR/github-output-mismatch.log"
+export CURL_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
+mkdir -p "$BUILDBOX_STATE_DIR"
+
+export MOCK_GIT_HEAD='3333333333333333333333333333333333333333'
+"$ROOT/scripts/load-build-spec" spec-apk-1
+if "$ROOT/scripts/build-android" 2>"$TMP_DIR/mismatch.err"; then
+  printf 'expected commit mismatch to fail\n' >&2
+  exit 1
+fi
+assert_file_contains "$TMP_DIR/mismatch.err" "does not match spec commit"
+"$ROOT/scripts/report-result" failed "commit mismatch"
+jq -e '
+  .status == "failed" and
+  .githubRunId == 987654321 and
+  .artifacts == [] and
+  .errorCode == "BUILD_FAILED" and
+  .errorMessage == "commit mismatch" and
+  ((keys | sort) == ["artifacts", "errorCode", "errorMessage", "githubRunId", "status"])
+' "$BUILDBOX_STATE_DIR/callback-failed.json" >/dev/null
+
+BUILDBOX_STATE_DIR="$TMP_DIR/state-tampered"
+GITHUB_OUTPUT="$TMP_DIR/github-output-tampered.log"
+export BUILDBOX_STATE_DIR GITHUB_OUTPUT
+mkdir -p "$BUILDBOX_STATE_DIR"
+if "$ROOT/scripts/load-build-spec" spec-tampered 2>"$TMP_DIR/tampered.err"; then
+  printf 'expected a mismatched spec hash to fail\n' >&2
+  exit 1
+fi
+assert_file_contains "$TMP_DIR/tampered.err" "specHash does not match config"
+
+printf 'contract tests passed\n'

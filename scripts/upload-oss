@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+set +x
+
+die() {
+  printf 'upload-oss: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
+SPEC_ENV="$STATE_DIR/spec.env"
+ARTIFACTS_ENV="$STATE_DIR/artifacts.env"
+[[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
+[[ -f "$ARTIFACTS_ENV" ]] || die "missing artifact metadata: $ARTIFACTS_ENV"
+# shellcheck disable=SC1090
+source "$SPEC_ENV"
+# shellcheck disable=SC1090
+source "$ARTIFACTS_ENV"
+
+require_command curl
+require_command jq
+
+while IFS= read -r target; do
+  artifact_path=$(jq -er --arg target "$target" '.[] | select(.target == $target) | .path' "$BUILDBOX_ARTIFACTS_JSON") || die "missing artifact path for target: $target"
+  upload_url=$(jq -er --arg target "$target" '.[] | select(.target == $target) | .url' "$BUILDBOX_UPLOADS_JSON") || die "missing upload url for target: $target"
+  [[ -f "$artifact_path" ]] || die "artifact not found: $artifact_path"
+
+  CURL_ARGS=(--fail --silent --show-error --request PUT)
+  while IFS= read -r encoded; do
+    key=$(printf '%s' "$encoded" | base64 --decode | jq -r '.[0]')
+    value=$(printf '%s' "$encoded" | base64 --decode | jq -r '.[1] | tostring')
+    CURL_ARGS+=(--header "${key}: ${value}")
+  done < <(jq -r --arg target "$target" '.[] | select(.target == $target) | .headers | to_entries[] | [.key, .value] | @base64' "$BUILDBOX_UPLOADS_JSON")
+
+  curl "${CURL_ARGS[@]}" --upload-file "$artifact_path" "$upload_url"
+  printf 'Uploaded %s for run %s\n' "$target" "$BUILDBOX_RUN_ID"
+done < <(jq -r '.[]' "$BUILDBOX_TARGETS_JSON")

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+LOG=${FLUTTER_LOG:?FLUTTER_LOG is required}
+printf '%q ' "$0" "$@" >>"$LOG"
+printf '\n' >>"$LOG"
+
+if [[ "$1" == "build" && "$2" == "apk" ]]; then
+  mkdir -p build/app/outputs/flutter-apk
+  printf 'contract apk\n' >build/app/outputs/flutter-apk/app-release.apk
+  exit 0
+fi
+
+if [[ "$1" == "build" && "$2" == "appbundle" ]]; then
+  mkdir -p build/app/outputs/bundle/release
+  printf 'contract aab\n' >build/app/outputs/bundle/release/app-release.aab
+  exit 0
+fi
+
+printf 'unexpected flutter call\n' >&2
+exit 1

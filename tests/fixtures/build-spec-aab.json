@@ -1,0 +1,32 @@
+{
+  "id": "spec-aab-1",
+  "releaseId": "202",
+  "tenantId": "402",
+  "appId": "102",
+  "sourceRepo": "boxliy/aviary",
+  "commitSha": "2222222222222222222222222222222222222222",
+  "targets": ["android_aab"],
+  "artifactPrefix": "builds/spec-aab-1/",
+  "specHash": "sha256:d109c651974737f442368a2d7a4eea19663cd1ceaa3e345378402d54f9c30f6a",
+  "config": {
+    "appId": "102",
+    "artifactPrefix": "builds/spec-aab-1/",
+    "commitSha": "2222222222222222222222222222222222222222",
+    "releaseId": "202",
+    "sourceRepo": "boxliy/aviary",
+    "storageProfileId": "302",
+    "targets": ["android_aab"],
+    "tenantId": "402"
+  },
+  "runId": "run-aab-1",
+  "callbackUrl": "/api/v1/buildbox/runs/run-aab-1/callback",
+  "uploads": [
+    {
+      "target": "android_aab",
+      "objectKey": "builds/spec-aab-1/android_aab.aab",
+      "url": "https://oss.example/upload.aab",
+      "contentType": "application/octet-stream",
+      "headers": {}
+    }
+  ]
+}

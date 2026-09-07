@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+set +x
+
+usage() {
+  printf 'usage: %s <build_spec_id>\n' "${0##*/}" >&2
+}
+
+die() {
+  printf 'load-build-spec: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+json_get_required() {
+  local filter=$1
+  local name=$2
+  local value
+  value=$(jq -er "$filter | select(type == \"string\" and length > 0)" "$SPEC_RESPONSE") || die "missing required spec field: $name"
+  printf '%s' "$value"
+}
+
+[[ $# -eq 1 ]] || { usage; exit 64; }
+
+BUILD_SPEC_ID=$1
+[[ -n "$BUILD_SPEC_ID" ]] || die 'build_spec_id must not be empty'
+[[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
+[[ -n "${HAWK_BUILDBOX_TOKEN:-}" ]] || die 'HAWK_BUILDBOX_TOKEN is required'
+
+require_command curl
+require_command jq
+require_command sha256sum
+
+STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
+mkdir -p "$STATE_DIR"
+
+SPEC_RESPONSE="$STATE_DIR/spec-response.json"
+SPEC_JSON="$STATE_DIR/spec.json"
+SPEC_ENV="$STATE_DIR/spec.env"
+TARGETS_JSON="$STATE_DIR/targets.json"
+UPLOADS_JSON="$STATE_DIR/uploads.json"
+DART_DEFINES_JSON="$STATE_DIR/dart-defines.json"
+SWAN_CONFIG_JSON="$STATE_DIR/swan-config.json"
+
+BASE_URL=${HAWK_BASE_URL%/}
+SPEC_URL="$BASE_URL/api/v1/buildbox/build-specs/$BUILD_SPEC_ID"
+
+curl --fail --silent --show-error \
+  --header "Authorization: Bearer $HAWK_BUILDBOX_TOKEN" \
+  --header 'Accept: application/json' \
+  --output "$SPEC_RESPONSE" \
+  "$SPEC_URL"
+
+REPOSITORY=$(json_get_required '.sourceRepo' sourceRepo)
+COMMIT_SHA=$(json_get_required '.commitSha' commitSha)
+RUN_ID=$(json_get_required '.runId' runId)
+SPEC_HASH=$(json_get_required '.specHash' specHash)
+ARTIFACT_PREFIX=$(json_get_required '.artifactPrefix' artifactPrefix)
+
+CONFIG_COMPACT=$(jq -ceS '.config | objects' "$SPEC_RESPONSE") || die 'config must be an object'
+ACTUAL_SPEC_HASH="sha256:$(printf '%s' "$CONFIG_COMPACT" | sha256sum | awk '{print $1}')"
+[[ "$SPEC_HASH" == "$ACTUAL_SPEC_HASH" ]] || die 'specHash does not match config'
+
+TARGETS_COMPACT=$(jq -cer '
+  .targets as $targets |
+  $targets |
+  select(type == "array" and length >= 1 and length <= 2) |
+  select(all(.[]; . == "android_apk" or . == "android_aab")) |
+  select((unique | length) == length)
+' "$SPEC_RESPONSE") || die 'targets must contain 1-2 unique Android targets: android_apk, android_aab'
+
+jq -e \
+  --arg repository "$REPOSITORY" \
+  --arg commitSha "$COMMIT_SHA" \
+  --arg artifactPrefix "$ARTIFACT_PREFIX" \
+  --argjson targets "$TARGETS_COMPACT" \
+  '.config.sourceRepo == $repository and
+   .config.commitSha == $commitSha and
+   .config.artifactPrefix == $artifactPrefix and
+   .config.targets == $targets' \
+  "$SPEC_RESPONSE" >/dev/null || die 'signed config does not match build spec fields'
+
+UPLOADS_COMPACT=$(jq -cer --argjson targets "$TARGETS_COMPACT" --arg prefix "$ARTIFACT_PREFIX" '
+  .uploads as $uploads |
+  [
+    $targets[] as $target |
+    if ($uploads | length) > 0 then
+      (
+        $uploads[] |
+        select(.target == $target) |
+        {
+          target: $target,
+          objectKey: (.objectKey // ""),
+          url: .url,
+          contentType: .contentType,
+          headers: (.headers // {})
+        }
+      )
+    else empty end
+  ] |
+  select(length == ($targets | length)) |
+  select(all(.[];
+    (.url | type == "string" and length > 0) and
+    (.headers | type == "object") and
+    (if .target == "android_apk" then
+      .objectKey == ($prefix + "android_apk.apk") and
+      .contentType == "application/vnd.android.package-archive"
+    else
+      .objectKey == ($prefix + "android_aab.aab") and
+      .contentType == "application/octet-stream"
+    end)
+  ))
+' "$SPEC_RESPONSE") || die 'each target must have a matching presigned upload url, contentType, and object headers'
+
+if [[ ! "$COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  die "commitSha must be a full 40-character SHA"
+fi
+
+CHECKOUT_REPOSITORY=$REPOSITORY
+if [[ "$CHECKOUT_REPOSITORY" =~ ^https://github.com/([^/]+/[^/.]+)(\.git)?$ ]]; then
+  CHECKOUT_REPOSITORY=${BASH_REMATCH[1]}
+elif [[ "$CHECKOUT_REPOSITORY" =~ ^git@github.com:([^/]+/[^.]+)(\.git)?$ ]]; then
+  CHECKOUT_REPOSITORY=${BASH_REMATCH[1]}
+fi
+
+if [[ ! "$CHECKOUT_REPOSITORY" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
+  die "repository must be a GitHub owner/repo slug or github.com URL"
+fi
+
+printf '%s\n' "$TARGETS_COMPACT" | jq -e '.' >"$TARGETS_JSON"
+printf '%s\n' "$UPLOADS_COMPACT" | jq -e '.' >"$UPLOADS_JSON"
+
+jq -e '
+  {
+    buildSpecId: $buildSpecId,
+    sourceRepo: .sourceRepo,
+    checkoutRepository: $checkoutRepository,
+    commitSha: .commitSha,
+    targets: $targets,
+    runId: .runId,
+    specHash: .specHash,
+    config: .config,
+    uploads: $uploads,
+    dartDefines: (.config.dartDefines // {}),
+    swanConfig: (.config.swanConfig // {})
+  }
+' \
+  --arg buildSpecId "$BUILD_SPEC_ID" \
+  --arg checkoutRepository "$CHECKOUT_REPOSITORY" \
+  --argjson targets "$TARGETS_COMPACT" \
+  --argjson uploads "$UPLOADS_COMPACT" \
+  "$SPEC_RESPONSE" >"$SPEC_JSON"
+
+jq -e '.dartDefines | objects' "$SPEC_JSON" >"$DART_DEFINES_JSON"
+jq -e '.swanConfig | objects' "$SPEC_JSON" >"$SWAN_CONFIG_JSON"
+
+TARGETS_CSV=$(jq -r 'join(",")' "$TARGETS_JSON")
+
+{
+  printf 'BUILDBOX_SPEC_ID=%q\n' "$BUILD_SPEC_ID"
+  printf 'BUILDBOX_REPOSITORY=%q\n' "$REPOSITORY"
+  printf 'BUILDBOX_CHECKOUT_REPOSITORY=%q\n' "$CHECKOUT_REPOSITORY"
+  printf 'BUILDBOX_COMMIT_SHA=%q\n' "$COMMIT_SHA"
+  printf 'BUILDBOX_TARGETS=%q\n' "$TARGETS_CSV"
+  printf 'BUILDBOX_RUN_ID=%q\n' "$RUN_ID"
+  printf 'BUILDBOX_SPEC_HASH=%q\n' "$SPEC_HASH"
+  printf 'BUILDBOX_SPEC_JSON=%q\n' "$SPEC_JSON"
+  printf 'BUILDBOX_TARGETS_JSON=%q\n' "$TARGETS_JSON"
+  printf 'BUILDBOX_UPLOADS_JSON=%q\n' "$UPLOADS_JSON"
+  printf 'BUILDBOX_DART_DEFINES_JSON=%q\n' "$DART_DEFINES_JSON"
+  printf 'BUILDBOX_SWAN_CONFIG_JSON=%q\n' "$SWAN_CONFIG_JSON"
+} >"$SPEC_ENV"
+
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  {
+    printf 'BUILDBOX_SPEC_ID=%s\n' "$BUILD_SPEC_ID"
+    printf 'BUILDBOX_REPOSITORY=%s\n' "$REPOSITORY"
+    printf 'BUILDBOX_CHECKOUT_REPOSITORY=%s\n' "$CHECKOUT_REPOSITORY"
+    printf 'BUILDBOX_COMMIT_SHA=%s\n' "$COMMIT_SHA"
+    printf 'BUILDBOX_TARGETS=%s\n' "$TARGETS_CSV"
+    printf 'BUILDBOX_RUN_ID=%s\n' "$RUN_ID"
+    printf 'BUILDBOX_SPEC_HASH=%s\n' "$SPEC_HASH"
+    printf 'BUILDBOX_SPEC_JSON=%s\n' "$SPEC_JSON"
+    printf 'BUILDBOX_TARGETS_JSON=%s\n' "$TARGETS_JSON"
+    printf 'BUILDBOX_UPLOADS_JSON=%s\n' "$UPLOADS_JSON"
+    printf 'BUILDBOX_DART_DEFINES_JSON=%s\n' "$DART_DEFINES_JSON"
+    printf 'BUILDBOX_SWAN_CONFIG_JSON=%s\n' "$SWAN_CONFIG_JSON"
+  } >>"$GITHUB_ENV"
+fi
+
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  {
+    printf 'checkout_repository=%s\n' "$CHECKOUT_REPOSITORY"
+    printf 'commit_sha=%s\n' "$COMMIT_SHA"
+    printf 'targets=%s\n' "$TARGETS_CSV"
+    printf 'run_id=%s\n' "$RUN_ID"
+  } >>"$GITHUB_OUTPUT"
+fi
+
+printf 'Loaded build spec %s for run %s with targets %s\n' "$BUILD_SPEC_ID" "$RUN_ID" "$TARGETS_CSV"
