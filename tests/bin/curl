@@ -51,14 +51,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$method:$url" in
-  GET:*'/api/v1/buildbox/build-specs/spec-apk-1')
+  GET:*'/api/v1/buildbox/build-specs/101?run_id=401')
     cp "$FIXTURE_DIR/build-spec-apk.json" "$output"
     ;;
-  GET:*'/api/v1/buildbox/build-specs/spec-aab-1')
+  GET:*'/api/v1/buildbox/build-specs/102?run_id=402')
     cp "$FIXTURE_DIR/build-spec-aab.json" "$output"
     ;;
-  GET:*'/api/v1/buildbox/build-specs/spec-tampered')
-    jq '.specHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+  GET:*'/api/v1/buildbox/build-specs/103?run_id=403')
+    jq '.id = "103" | .runId = "403" | .specHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
       "$FIXTURE_DIR/build-spec-apk.json" >"$output"
     ;;
   PUT:https://oss.example/*)

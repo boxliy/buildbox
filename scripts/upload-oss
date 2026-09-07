@@ -13,19 +13,21 @@ require_command() {
 
 STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
 SPEC_ENV="$STATE_DIR/spec.env"
-ARTIFACTS_ENV="$STATE_DIR/artifacts.env"
 [[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
-[[ -f "$ARTIFACTS_ENV" ]] || die "missing artifact metadata: $ARTIFACTS_ENV"
 # shellcheck disable=SC1090
 source "$SPEC_ENV"
-# shellcheck disable=SC1090
-source "$ARTIFACTS_ENV"
+BUILDBOX_ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
+[[ -f "$BUILDBOX_ARTIFACTS_JSON" ]] || die "missing artifact metadata: $BUILDBOX_ARTIFACTS_JSON"
 
 require_command curl
 require_command jq
 
 while IFS= read -r target; do
-  artifact_path=$(jq -er --arg target "$target" '.[] | select(.target == $target) | .path' "$BUILDBOX_ARTIFACTS_JSON") || die "missing artifact path for target: $target"
+  case "$target" in
+    android_apk) artifact_path="$STATE_DIR/artifacts/swan-release.apk" ;;
+    android_aab) artifact_path="$STATE_DIR/artifacts/swan-release.aab" ;;
+    *) die "unsupported artifact target: $target" ;;
+  esac
   upload_url=$(jq -er --arg target "$target" '.[] | select(.target == $target) | .url' "$BUILDBOX_UPLOADS_JSON") || die "missing upload url for target: $target"
   [[ -f "$artifact_path" ]] || die "artifact not found: $artifact_path"
 

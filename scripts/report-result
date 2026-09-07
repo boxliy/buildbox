@@ -34,15 +34,16 @@ require_command jq
 
 STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
 SPEC_ENV="$STATE_DIR/spec.env"
-[[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
-# shellcheck disable=SC1090
-source "$SPEC_ENV"
-
-ARTIFACTS_ENV="$STATE_DIR/artifacts.env"
-if [[ -f "$ARTIFACTS_ENV" ]]; then
+if [[ -f "$SPEC_ENV" ]]; then
   # shellcheck disable=SC1090
-  source "$ARTIFACTS_ENV"
+  source "$SPEC_ENV"
+elif [[ "$STATUS" == "failed" && "${BUILDBOX_DISPATCH_ID:-}" =~ ^[0-9]+:([0-9]+)$ ]]; then
+  BUILDBOX_RUN_ID=${BASH_REMATCH[1]}
+else
+  die "missing spec env: $SPEC_ENV"
 fi
+
+BUILDBOX_ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
 
 PAYLOAD="$STATE_DIR/callback-${STATUS}.json"
 BASE_URL=${HAWK_BASE_URL%/}

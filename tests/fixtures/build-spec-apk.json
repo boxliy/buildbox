@@ -1,5 +1,5 @@
 {
-  "id": "spec-apk-1",
+  "id": "101",
   "releaseId": "201",
   "tenantId": "401",
   "appId": "101",
@@ -7,11 +7,17 @@
   "commitSha": "1111111111111111111111111111111111111111",
   "targets": ["android_apk", "android_aab"],
   "artifactPrefix": "builds/spec-apk-1/build-apk-1/",
-  "specHash": "sha256:2f41dba08681e3caa3a3e488c76d8e30db56f8612acc517052b82bda6511c023",
+  "specHash": "sha256:55b0a4b963adebb067f9fb955ee1b727309f1ff56073b8767271ee782ca19902",
   "config": {
     "androidApplicationId": "com.example.alpha",
     "appDisplayName": "Alpha App",
     "appId": "101",
+    "appProfile": {
+      "deviceCapabilities": [
+        {"key": "camera.capture", "requirement": "required"},
+        {"key": "location.foreground", "requirement": "optional"}
+      ]
+    },
     "artifactPrefix": "builds/spec-apk-1/",
     "commitSha": "1111111111111111111111111111111111111111",
     "dartDefines": {
@@ -26,8 +32,8 @@
     "targets": ["android_apk", "android_aab"],
     "tenantId": "401"
   },
-  "runId": "run-apk-1",
-  "callbackUrl": "/api/v1/buildbox/runs/run-apk-1/callback",
+  "runId": "401",
+  "callbackUrl": "/api/v1/buildbox/runs/401/callback",
   "uploads": [
     {
       "target": "android_apk",

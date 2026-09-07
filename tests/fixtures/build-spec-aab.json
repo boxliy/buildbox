@@ -1,5 +1,5 @@
 {
-  "id": "spec-aab-1",
+  "id": "102",
   "releaseId": "202",
   "tenantId": "402",
   "appId": "102",
@@ -7,11 +7,16 @@
   "commitSha": "2222222222222222222222222222222222222222",
   "targets": ["android_aab"],
   "artifactPrefix": "builds/spec-aab-1/build-aab-1/",
-  "specHash": "sha256:44d8c2918aa47559614f93c450f93155dd356bf978ac71a14867598c2a0a9752",
+  "specHash": "sha256:554cdba1093f3e1be3d8657e4d9028049d6498535bb4b47097cb11c7e2e95041",
   "config": {
     "androidApplicationId": "com.example.beta",
     "appDisplayName": "Beta App",
     "appId": "102",
+    "appProfile": {
+      "deviceCapabilities": [
+        {"key": "notifications.push", "requirement": "required"}
+      ]
+    },
     "artifactPrefix": "builds/spec-aab-1/",
     "commitSha": "2222222222222222222222222222222222222222",
     "dartDefines": {
@@ -26,8 +31,8 @@
     "targets": ["android_aab"],
     "tenantId": "402"
   },
-  "runId": "run-aab-1",
-  "callbackUrl": "/api/v1/buildbox/runs/run-aab-1/callback",
+  "runId": "402",
+  "callbackUrl": "/api/v1/buildbox/runs/402/callback",
   "uploads": [
     {
       "target": "android_aab",

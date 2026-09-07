@@ -13,7 +13,9 @@ export CURL_LOG="$TMP_DIR/curl.log"
 export FLUTTER_LOG="$TMP_DIR/flutter.log"
 export GITHUB_WORKSPACE="$TMP_DIR/workspace"
 export GITHUB_OUTPUT="$TMP_DIR/github-output.log"
+export GITHUB_ENV="$TMP_DIR/github-env.log"
 export BUILDBOX_GITHUB_RUN_ID=987654321
+printf '%s\n' 'UNCHANGED=1' >"$GITHUB_ENV"
 
 mkdir -p "$GITHUB_WORKSPACE/aviary-source/.git"
 mkdir -p "$GITHUB_WORKSPACE/aviary-source/waterfowl/apps/swan"
@@ -37,22 +39,28 @@ assert_file_not_contains() {
   fi
 }
 
+BUILD_JOB=$(sed -n '/^  build:/,/^  finalize:/p' "$ROOT/.github/workflows/build.yml")
+if grep -F 'HAWK_BUILDBOX_TOKEN' <<<"$BUILD_JOB" >/dev/null; then
+  printf 'build job must not receive the Hawk service token\n' >&2
+  exit 1
+fi
+
 export MOCK_GIT_HEAD='1111111111111111111111111111111111111111'
-"$ROOT/scripts/load-build-spec" spec-apk-1
+"$ROOT/scripts/load-build-spec" 101:401
 "$ROOT/scripts/report-result" running
 "$ROOT/scripts/build-android"
 "$ROOT/scripts/upload-oss"
 "$ROOT/scripts/report-result" succeeded
 
 source "$BUILDBOX_STATE_DIR/spec.env"
-source "$BUILDBOX_STATE_DIR/artifacts.env"
 
 [[ "$BUILDBOX_TARGETS" == "android_apk,android_aab" ]]
 [[ "$BUILDBOX_CHECKOUT_REPOSITORY" == "boxliy/aviary" ]]
-[[ "$(jq 'length' "$BUILDBOX_ARTIFACTS_JSON")" == "2" ]]
+[[ "$(jq 'length' "$BUILDBOX_STATE_DIR/artifacts.json")" == "2" ]]
 assert_file_contains "$GITHUB_OUTPUT" "checkout_repository=boxliy/aviary"
 assert_file_contains "$GITHUB_OUTPUT" "commit_sha=1111111111111111111111111111111111111111"
 assert_file_contains "$GITHUB_OUTPUT" "targets=android_apk,android_aab"
+[[ "$(cat "$GITHUB_ENV")" == "UNCHANGED=1" ]]
 assert_file_contains "$FLUTTER_LOG" "build apk --release"
 assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
 assert_file_contains "$FLUTTER_LOG" "SWAN_ANDROID_APPLICATION_ID=com.example.alpha"
@@ -60,7 +68,9 @@ assert_file_contains "$FLUTTER_LOG" "SWAN_APP_DISPLAY_NAME=Alpha\\ App"
 assert_file_contains "$FLUTTER_LOG" "--dart-define=SWAN_EXPECTED_APP_ID=app-alpha"
 assert_file_contains "$CURL_LOG" "https://oss.example/upload.apk"
 assert_file_contains "$CURL_LOG" "https://oss.example/upload.aab"
-assert_file_contains "$CURL_LOG" "/api/v1/buildbox/runs/run-apk-1/callback"
+assert_file_contains "$CURL_LOG" "/api/v1/buildbox/runs/401/callback"
+assert_file_contains "$FLUTTER_LOG" "android.permission.CAMERA"
+assert_file_contains "$FLUTTER_LOG" "android.permission.ACCESS_FINE_LOCATION"
 assert_file_not_contains "$CURL_LOG" "contract-token"
 jq -e '
   .status == "running" and
@@ -85,7 +95,7 @@ export CURL_LOG FLUTTER_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
 mkdir -p "$BUILDBOX_STATE_DIR"
 
 export MOCK_GIT_HEAD='2222222222222222222222222222222222222222'
-"$ROOT/scripts/load-build-spec" spec-aab-1
+"$ROOT/scripts/load-build-spec" 102:402
 "$ROOT/scripts/build-android"
 "$ROOT/scripts/upload-oss"
 "$ROOT/scripts/report-result" succeeded
@@ -93,6 +103,7 @@ assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
 assert_file_contains "$FLUTTER_LOG" "SWAN_ANDROID_APPLICATION_ID=com.example.beta"
 assert_file_contains "$FLUTTER_LOG" "SWAN_APP_DISPLAY_NAME=Beta\\ App"
 assert_file_contains "$FLUTTER_LOG" "--dart-define=SWAN_EXPECTED_APP_ID=app-beta"
+assert_file_contains "$FLUTTER_LOG" "android.permission.POST_NOTIFICATIONS"
 assert_file_contains "$CURL_LOG" "https://oss.example/upload.aab"
 assert_file_contains "$GITHUB_OUTPUT" "checkout_repository=boxliy/aviary"
 
@@ -103,7 +114,7 @@ export CURL_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
 mkdir -p "$BUILDBOX_STATE_DIR"
 
 export MOCK_GIT_HEAD='3333333333333333333333333333333333333333'
-"$ROOT/scripts/load-build-spec" spec-apk-1
+"$ROOT/scripts/load-build-spec" 101:401
 if "$ROOT/scripts/build-android" 2>"$TMP_DIR/mismatch.err"; then
   printf 'expected commit mismatch to fail\n' >&2
   exit 1
@@ -123,10 +134,18 @@ BUILDBOX_STATE_DIR="$TMP_DIR/state-tampered"
 GITHUB_OUTPUT="$TMP_DIR/github-output-tampered.log"
 export BUILDBOX_STATE_DIR GITHUB_OUTPUT
 mkdir -p "$BUILDBOX_STATE_DIR"
-if "$ROOT/scripts/load-build-spec" spec-tampered 2>"$TMP_DIR/tampered.err"; then
+if "$ROOT/scripts/load-build-spec" 103:403 2>"$TMP_DIR/tampered.err"; then
   printf 'expected a mismatched spec hash to fail\n' >&2
   exit 1
 fi
 assert_file_contains "$TMP_DIR/tampered.err" "specHash does not match config"
+
+CURL_LOG="$TMP_DIR/curl-early-failure.log"
+BUILDBOX_STATE_DIR="$TMP_DIR/state-early-failure"
+BUILDBOX_DISPATCH_ID=104:404
+export CURL_LOG BUILDBOX_STATE_DIR BUILDBOX_DISPATCH_ID
+mkdir -p "$BUILDBOX_STATE_DIR"
+"$ROOT/scripts/report-result" failed "prepare failed"
+assert_file_contains "$CURL_LOG" "/api/v1/buildbox/runs/404/callback"
 
 printf 'contract tests passed\n'

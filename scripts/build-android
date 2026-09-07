@@ -71,6 +71,10 @@ SPEC_ENV="$STATE_DIR/spec.env"
 [[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
 # shellcheck disable=SC1090
 source "$SPEC_ENV"
+BUILDBOX_SPEC_JSON="$STATE_DIR/spec.json"
+BUILDBOX_TARGETS_JSON="$STATE_DIR/targets.json"
+BUILDBOX_DART_DEFINES_JSON="$STATE_DIR/dart-defines.json"
+BUILDBOX_SWAN_CONFIG_JSON="$STATE_DIR/swan-config.json"
 
 require_command git
 require_command jq
@@ -81,10 +85,48 @@ SOURCE_ROOT=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:-$PWD}/aviary-source}
 SWAN_DIR=${BUILDBOX_SWAN_DIR:-$SOURCE_ROOT/waterfowl/apps/swan}
 ARTIFACT_DIR="$STATE_DIR/artifacts"
 ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
+NATIVE_MANIFEST="$SWAN_DIR/android/app/src/release/AndroidManifest.xml"
 mkdir -p "$ARTIFACT_DIR"
 
 [[ -d "$SOURCE_ROOT/.git" ]] || die "Aviary source checkout not found at $SOURCE_ROOT"
 [[ -d "$SWAN_DIR" ]] || die "Swan app directory not found at $SWAN_DIR"
+
+mkdir -p "${NATIVE_MANIFEST%/*}"
+{
+  printf '%s\n' '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+  jq -r '.config.appProfile.deviceCapabilities[]?.key' "$BUILDBOX_SPEC_JSON" | while IFS= read -r capability; do
+    case "$capability" in
+      camera.capture) printf '%s\n' '  <uses-permission android:name="android.permission.CAMERA" />' ;;
+      microphone.record) printf '%s\n' '  <uses-permission android:name="android.permission.RECORD_AUDIO" />' ;;
+      location.foreground)
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />'
+        ;;
+      location.background)
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />'
+        ;;
+      notifications.local | notifications.push)
+        printf '%s\n' '  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
+        ;;
+      photos.read)
+        printf '%s\n' '  <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />'
+        ;;
+      photos.write)
+        printf '%s\n' '  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />'
+        ;;
+      background.execution)
+        printf '%s\n' '  <uses-permission android:name="android.permission.WAKE_LOCK" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />'
+        ;;
+      files.open | files.save | deep_links.custom_scheme | deep_links.verified) ;;
+      *) die "unsupported native capability: $capability" ;;
+    esac
+  done
+  printf '%s\n' '</manifest>'
+} >"$NATIVE_MANIFEST"
 
 ACTUAL_SHA=$(git -C "$SOURCE_ROOT" rev-parse HEAD)
 if [[ "$ACTUAL_SHA" != "$BUILDBOX_COMMIT_SHA" ]]; then
@@ -115,9 +157,3 @@ while IFS= read -r target; do
 done < <(jq -r '.[]' "$BUILDBOX_TARGETS_JSON")
 
 jq -s '.' "$ARTIFACT_DIR"/*.json >"$ARTIFACTS_JSON"
-
-if [[ -n "${GITHUB_ENV:-}" ]]; then
-  printf 'BUILDBOX_ARTIFACTS_JSON=%s\n' "$ARTIFACTS_JSON" >>"$GITHUB_ENV"
-fi
-
-printf 'BUILDBOX_ARTIFACTS_JSON=%q\n' "$ARTIFACTS_JSON" >"$STATE_DIR/artifacts.env"

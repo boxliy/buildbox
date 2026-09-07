@@ -7,7 +7,7 @@ specs. The first supported target is Swan Android artifacts.
 
 Run `.github/workflows/build.yml` manually with one input:
 
-- `build_spec_id`: immutable Hawk build spec id
+- `build_spec_id`: Hawk-issued `<spec_id>:<run_id>` identity for one immutable attempt
 
 No repository, commit, upload URL, token, or business configuration is accepted
 as workflow input. Runtime authority comes from these repository secrets:
@@ -16,14 +16,17 @@ as workflow input. Runtime authority comes from these repository secrets:
 - `HAWK_BUILDBOX_TOKEN`
 - `AVIARY_SOURCE_TOKEN`: read-only access to the private Aviary repository
 
-The workflow:
+The workflow separates trusted prepare/finalize work from compilation onto
+different runners, so code from the selected Aviary commit never shares a
+runner with the long-lived Hawk token. It:
 
-1. Loads the immutable build spec from
-   `GET /api/v1/buildbox/build-specs/{id}`.
-2. Checks out `sourceRepo` at `commitSha` into `aviary-source`.
+1. Loads the exact immutable build spec attempt from
+   `GET /api/v1/buildbox/build-specs/{id}?run_id={runId}`.
+2. Checks out `sourceRepo` at `commitSha` into `aviary-source` with a read-only token.
 3. Verifies `HEAD` exactly matches `commitSha` and is reachable from trusted
    `origin/main`.
-4. Builds each requested target from `waterfowl/apps/swan`.
+4. Builds each requested target from `waterfowl/apps/swan`, generating a
+   release manifest overlay from the frozen native capability list.
 5. Computes SHA-256 and byte size for each artifact.
 6. Uploads each artifact with its matching presigned `PUT` URL and headers.
 7. Posts a running callback followed by a success or failure callback to
