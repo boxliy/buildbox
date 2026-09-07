@@ -59,6 +59,8 @@ COMMIT_SHA=$(json_get_required '.commitSha' commitSha)
 RUN_ID=$(json_get_required '.runId' runId)
 SPEC_HASH=$(json_get_required '.specHash' specHash)
 ARTIFACT_PREFIX=$(json_get_required '.artifactPrefix' artifactPrefix)
+ANDROID_APPLICATION_ID=$(json_get_required '.config.androidApplicationId' config.androidApplicationId)
+APP_DISPLAY_NAME=$(json_get_required '.config.appDisplayName' config.appDisplayName)
 
 CONFIG_COMPACT=$(jq -ceS '.config | objects' "$SPEC_RESPONSE") || die 'config must be an object'
 ACTUAL_SPEC_HASH="sha256:$(printf '%s' "$CONFIG_COMPACT" | sha256sum | awk '{print $1}')"
@@ -79,7 +81,7 @@ jq -e \
   --argjson targets "$TARGETS_COMPACT" \
   '.config.sourceRepo == $repository and
    .config.commitSha == $commitSha and
-   .config.artifactPrefix == $artifactPrefix and
+   (.config.artifactPrefix as $base | $artifactPrefix | startswith($base)) and
    .config.targets == $targets' \
   "$SPEC_RESPONSE" >/dev/null || die 'signed config does not match build spec fields'
 
@@ -167,6 +169,8 @@ TARGETS_CSV=$(jq -r 'join(",")' "$TARGETS_JSON")
   printf 'BUILDBOX_TARGETS=%q\n' "$TARGETS_CSV"
   printf 'BUILDBOX_RUN_ID=%q\n' "$RUN_ID"
   printf 'BUILDBOX_SPEC_HASH=%q\n' "$SPEC_HASH"
+  printf 'BUILDBOX_ANDROID_APPLICATION_ID=%q\n' "$ANDROID_APPLICATION_ID"
+  printf 'BUILDBOX_APP_DISPLAY_NAME=%q\n' "$APP_DISPLAY_NAME"
   printf 'BUILDBOX_SPEC_JSON=%q\n' "$SPEC_JSON"
   printf 'BUILDBOX_TARGETS_JSON=%q\n' "$TARGETS_JSON"
   printf 'BUILDBOX_UPLOADS_JSON=%q\n' "$UPLOADS_JSON"
@@ -183,6 +187,8 @@ if [[ -n "${GITHUB_ENV:-}" ]]; then
     printf 'BUILDBOX_TARGETS=%s\n' "$TARGETS_CSV"
     printf 'BUILDBOX_RUN_ID=%s\n' "$RUN_ID"
     printf 'BUILDBOX_SPEC_HASH=%s\n' "$SPEC_HASH"
+    printf 'BUILDBOX_ANDROID_APPLICATION_ID=%s\n' "$ANDROID_APPLICATION_ID"
+    printf 'BUILDBOX_APP_DISPLAY_NAME=%s\n' "$APP_DISPLAY_NAME"
     printf 'BUILDBOX_SPEC_JSON=%s\n' "$SPEC_JSON"
     printf 'BUILDBOX_TARGETS_JSON=%s\n' "$TARGETS_JSON"
     printf 'BUILDBOX_UPLOADS_JSON=%s\n' "$UPLOADS_JSON"

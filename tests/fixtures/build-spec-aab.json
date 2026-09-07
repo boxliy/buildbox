@@ -6,12 +6,20 @@
   "sourceRepo": "boxliy/aviary",
   "commitSha": "2222222222222222222222222222222222222222",
   "targets": ["android_aab"],
-  "artifactPrefix": "builds/spec-aab-1/",
-  "specHash": "sha256:d109c651974737f442368a2d7a4eea19663cd1ceaa3e345378402d54f9c30f6a",
+  "artifactPrefix": "builds/spec-aab-1/build-aab-1/",
+  "specHash": "sha256:44d8c2918aa47559614f93c450f93155dd356bf978ac71a14867598c2a0a9752",
   "config": {
+    "androidApplicationId": "com.example.beta",
+    "appDisplayName": "Beta App",
     "appId": "102",
     "artifactPrefix": "builds/spec-aab-1/",
     "commitSha": "2222222222222222222222222222222222222222",
+    "dartDefines": {
+      "SWAN_APP_PUBLIC_ID": "tenant-beta.app-beta",
+      "SWAN_EXPECTED_APP_ID": "app-beta",
+      "SWAN_EXPECTED_TENANT_ID": "tenant-beta",
+      "SWAN_HAWK_BASE_URL": "https://hawk.example"
+    },
     "releaseId": "202",
     "sourceRepo": "boxliy/aviary",
     "storageProfileId": "302",
@@ -23,7 +31,7 @@
   "uploads": [
     {
       "target": "android_aab",
-      "objectKey": "builds/spec-aab-1/android_aab.aab",
+      "objectKey": "builds/spec-aab-1/build-aab-1/android_aab.aab",
       "url": "https://oss.example/upload.aab",
       "contentType": "application/octet-stream",
       "headers": {}

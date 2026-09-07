@@ -39,7 +39,10 @@ build_target() {
 
   (
     cd "$SWAN_DIR"
-    "${FLUTTER_CMD[@]}" "${FLUTTER_TARGET[@]}" "${DEFINE_ARGS[@]}"
+    SWAN_ANDROID_APPLICATION_ID="$BUILDBOX_ANDROID_APPLICATION_ID" \
+      SWAN_APP_DISPLAY_NAME="$BUILDBOX_APP_DISPLAY_NAME" \
+      SWAN_ARTIFACT_KIND=unsigned_release \
+      "${FLUTTER_CMD[@]}" "${FLUTTER_TARGET[@]}" "${DEFINE_ARGS[@]}"
   )
 
   artifact_path="$SWAN_DIR/$artifact_glob"

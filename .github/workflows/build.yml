@@ -14,9 +14,8 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     env:
-      HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-      HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
       BUILDBOX_STATE_DIR: ${{ runner.temp }}/buildbox
       BUILDBOX_SPEC_ID: ${{ inputs.build_spec_id }}
       BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}
@@ -25,11 +24,11 @@ jobs:
       - name: Checkout buildbox
         uses: actions/checkout@v4
 
-      - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y jq curl
-
       - name: Load build spec
         id: spec
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
         run: scripts/load-build-spec "$BUILDBOX_SPEC_ID"
 
       - name: Checkout Aviary source
@@ -38,7 +37,15 @@ jobs:
           repository: ${{ steps.spec.outputs.checkout_repository }}
           ref: ${{ steps.spec.outputs.commit_sha }}
           path: aviary-source
+          token: ${{ secrets.AVIARY_SOURCE_TOKEN }}
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify trusted source revision
+        shell: bash
+        run: |
+          git -C aviary-source rev-parse --verify refs/remotes/origin/main
+          git -C aviary-source merge-base --is-ancestor HEAD refs/remotes/origin/main
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -52,15 +59,36 @@ jobs:
           flutter-version-file: aviary-source/waterfowl/.fvmrc
           cache: true
 
-      - name: Build, upload, and report
+      - name: Report running
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
+        run: scripts/report-result running
+
+      - name: Build Android artifacts
         shell: bash
-        run: |
-          scripts/report-result running
-          scripts/build-android
-          scripts/upload-oss
-          scripts/report-result succeeded
+        run: scripts/build-android
+
+      - name: Refresh upload authorization
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
+        run: scripts/load-build-spec "$BUILDBOX_SPEC_ID"
+
+      - name: Upload Android artifacts
+        run: scripts/upload-oss
+
+      - name: Report success
+        id: success
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
+        run: scripts/report-result succeeded
 
       - name: Report workflow failure
-        if: ${{ failure() && steps.spec.outcome == 'success' }}
+        if: ${{ (failure() || cancelled()) && steps.spec.outcome == 'success' && steps.success.outcome != 'failure' }}
         shell: bash
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
         run: scripts/report-result failed "Buildbox workflow failed in GitHub run $BUILDBOX_GITHUB_RUN_ID"

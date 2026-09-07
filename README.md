@@ -14,13 +14,15 @@ as workflow input. Runtime authority comes from these repository secrets:
 
 - `HAWK_BASE_URL`
 - `HAWK_BUILDBOX_TOKEN`
+- `AVIARY_SOURCE_TOKEN`: read-only access to the private Aviary repository
 
 The workflow:
 
 1. Loads the immutable build spec from
    `GET /api/v1/buildbox/build-specs/{id}`.
 2. Checks out `sourceRepo` at `commitSha` into `aviary-source`.
-3. Verifies `HEAD` exactly matches `commitSha`.
+3. Verifies `HEAD` exactly matches `commitSha` and is reachable from trusted
+   `origin/main`.
 4. Builds each requested target from `waterfowl/apps/swan`.
 5. Computes SHA-256 and byte size for each artifact.
 6. Uploads each artifact with its matching presigned `PUT` URL and headers.
@@ -39,6 +41,7 @@ The workflow:
 - `config`: immutable build input object
 - `specHash`: SHA-256 of the canonical JSON `config`; the loader verifies it
 - `uploads`: an array with an entry matching the target
+- `artifactPrefix`: attempt-specific immutable object prefix
 - `uploads[].url`: presigned `PUT` URL
 - `uploads[].contentType`: artifact content type
 - `uploads[].headers`: presigned upload headers as an object
@@ -52,6 +55,12 @@ Optional config fields:
 `--dart-define=KEY=VALUE`.
 `swanConfig`, when present, is passed as a compact JSON value through
 `--dart-define=SWAN_CONFIG_JSON=...`.
+
+The immutable config must include `androidApplicationId` and `appDisplayName`.
+Buildbox exports them only to the Flutter build as
+`SWAN_ANDROID_APPLICATION_ID` and `SWAN_APP_DISPLAY_NAME`; runtime identity,
+Hawk origin, release channel, feature keys, capabilities, and trusted release
+keys are supplied through `config.dartDefines`.
 
 Success callbacks send:
 

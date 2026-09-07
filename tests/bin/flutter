@@ -2,6 +2,9 @@
 set -Eeuo pipefail
 
 LOG=${FLUTTER_LOG:?FLUTTER_LOG is required}
+printf 'SWAN_ANDROID_APPLICATION_ID=%q SWAN_APP_DISPLAY_NAME=%q SWAN_ARTIFACT_KIND=%q ' \
+  "${SWAN_ANDROID_APPLICATION_ID:-}" "${SWAN_APP_DISPLAY_NAME:-}" "${SWAN_ARTIFACT_KIND:-}" \
+  >>"$LOG"
 printf '%q ' "$0" "$@" >>"$LOG"
 printf '\n' >>"$LOG"
 

@@ -6,12 +6,20 @@
   "sourceRepo": "boxliy/aviary",
   "commitSha": "1111111111111111111111111111111111111111",
   "targets": ["android_apk", "android_aab"],
-  "artifactPrefix": "builds/spec-apk-1/",
-  "specHash": "sha256:0b645ff3ac664972e8672733a5bd24c14d42d2d8eb95f3cb85fb822ca294c644",
+  "artifactPrefix": "builds/spec-apk-1/build-apk-1/",
+  "specHash": "sha256:2f41dba08681e3caa3a3e488c76d8e30db56f8612acc517052b82bda6511c023",
   "config": {
+    "androidApplicationId": "com.example.alpha",
+    "appDisplayName": "Alpha App",
     "appId": "101",
     "artifactPrefix": "builds/spec-apk-1/",
     "commitSha": "1111111111111111111111111111111111111111",
+    "dartDefines": {
+      "SWAN_APP_PUBLIC_ID": "tenant-alpha.app-alpha",
+      "SWAN_EXPECTED_APP_ID": "app-alpha",
+      "SWAN_EXPECTED_TENANT_ID": "tenant-alpha",
+      "SWAN_HAWK_BASE_URL": "https://hawk.example"
+    },
     "releaseId": "201",
     "sourceRepo": "boxliy/aviary",
     "storageProfileId": "301",
@@ -23,7 +31,7 @@
   "uploads": [
     {
       "target": "android_apk",
-      "objectKey": "builds/spec-apk-1/android_apk.apk",
+      "objectKey": "builds/spec-apk-1/build-apk-1/android_apk.apk",
       "url": "https://oss.example/upload.apk",
       "contentType": "application/vnd.android.package-archive",
       "headers": {
@@ -33,7 +41,7 @@
     },
     {
       "target": "android_aab",
-      "objectKey": "builds/spec-apk-1/android_aab.aab",
+      "objectKey": "builds/spec-apk-1/build-apk-1/android_aab.aab",
       "url": "https://oss.example/upload.aab",
       "contentType": "application/octet-stream",
       "headers": {

@@ -55,6 +55,9 @@ assert_file_contains "$GITHUB_OUTPUT" "commit_sha=111111111111111111111111111111
 assert_file_contains "$GITHUB_OUTPUT" "targets=android_apk,android_aab"
 assert_file_contains "$FLUTTER_LOG" "build apk --release"
 assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
+assert_file_contains "$FLUTTER_LOG" "SWAN_ANDROID_APPLICATION_ID=com.example.alpha"
+assert_file_contains "$FLUTTER_LOG" "SWAN_APP_DISPLAY_NAME=Alpha\\ App"
+assert_file_contains "$FLUTTER_LOG" "--dart-define=SWAN_EXPECTED_APP_ID=app-alpha"
 assert_file_contains "$CURL_LOG" "https://oss.example/upload.apk"
 assert_file_contains "$CURL_LOG" "https://oss.example/upload.aab"
 assert_file_contains "$CURL_LOG" "/api/v1/buildbox/runs/run-apk-1/callback"
@@ -70,8 +73,8 @@ jq -e '
   .githubRunId == 987654321 and
   (.artifacts | length) == 2 and
   ((keys | sort) == ["artifacts", "githubRunId", "status"]) and
-  (any(.artifacts[]; .target == "android_apk" and .fileName == "swan-release.apk" and .contentType == "application/vnd.android.package-archive" and .objectKey == "builds/spec-apk-1/android_apk.apk" and .byteSize == 13 and (.sha256 | test("^sha256:[0-9a-f]{64}$")))) and
-  (any(.artifacts[]; .target == "android_aab" and .fileName == "swan-release.aab" and .contentType == "application/octet-stream" and .objectKey == "builds/spec-apk-1/android_aab.aab" and .byteSize == 13 and (.sha256 | test("^sha256:[0-9a-f]{64}$"))))
+  (any(.artifacts[]; .target == "android_apk" and .fileName == "swan-release.apk" and .contentType == "application/vnd.android.package-archive" and .objectKey == "builds/spec-apk-1/build-apk-1/android_apk.apk" and .byteSize == 13 and (.sha256 | test("^sha256:[0-9a-f]{64}$")))) and
+  (any(.artifacts[]; .target == "android_aab" and .fileName == "swan-release.aab" and .contentType == "application/octet-stream" and .objectKey == "builds/spec-apk-1/build-apk-1/android_aab.aab" and .byteSize == 13 and (.sha256 | test("^sha256:[0-9a-f]{64}$"))))
 ' "$BUILDBOX_STATE_DIR/callback-succeeded.json" >/dev/null
 
 CURL_LOG="$TMP_DIR/curl-aab.log"
@@ -87,6 +90,9 @@ export MOCK_GIT_HEAD='2222222222222222222222222222222222222222'
 "$ROOT/scripts/upload-oss"
 "$ROOT/scripts/report-result" succeeded
 assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
+assert_file_contains "$FLUTTER_LOG" "SWAN_ANDROID_APPLICATION_ID=com.example.beta"
+assert_file_contains "$FLUTTER_LOG" "SWAN_APP_DISPLAY_NAME=Beta\\ App"
+assert_file_contains "$FLUTTER_LOG" "--dart-define=SWAN_EXPECTED_APP_ID=app-beta"
 assert_file_contains "$CURL_LOG" "https://oss.example/upload.aab"
 assert_file_contains "$GITHUB_OUTPUT" "checkout_repository=boxliy/aviary"
 
