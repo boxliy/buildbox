@@ -7,7 +7,7 @@
   "commitSha": "1111111111111111111111111111111111111111",
   "targets": ["android_apk", "android_aab"],
   "artifactPrefix": "builds/spec-apk-1/build-apk-1/",
-  "specHash": "sha256:55b0a4b963adebb067f9fb955ee1b727309f1ff56073b8767271ee782ca19902",
+  "specHash": "sha256:a00afc957453382426001de116cad26dce2fe2e7c572b2e0d82e11abd56e00f1",
   "config": {
     "androidApplicationId": "com.example.alpha",
     "appDisplayName": "Alpha App",
@@ -15,7 +15,9 @@
     "appProfile": {
       "deviceCapabilities": [
         {"key": "camera.capture", "requirement": "required"},
-        {"key": "location.foreground", "requirement": "optional"}
+        {"key": "location.foreground", "requirement": "optional"},
+        {"key": "biometrics.authenticate", "requirement": "optional"},
+        {"key": "deep_links.custom_scheme", "requirement": "optional"}
       ]
     },
     "artifactPrefix": "builds/spec-apk-1/",

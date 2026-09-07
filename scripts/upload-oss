@@ -21,15 +21,37 @@ BUILDBOX_ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
 
 require_command curl
 require_command jq
+require_command sha256sum
+require_command wc
+
+VERIFIED_DIR="$STATE_DIR/verified-artifacts"
+mkdir -p "$VERIFIED_DIR"
 
 while IFS= read -r target; do
   case "$target" in
-    android_apk) artifact_path="$STATE_DIR/artifacts/swan-release.apk" ;;
-    android_aab) artifact_path="$STATE_DIR/artifacts/swan-release.aab" ;;
+    android_apk)
+      artifact_path="$STATE_DIR/artifacts/swan-release.apk"
+      artifact_file_name=swan-release.apk
+      ;;
+    android_aab)
+      artifact_path="$STATE_DIR/artifacts/swan-release.aab"
+      artifact_file_name=swan-release.aab
+      ;;
     *) die "unsupported artifact target: $target" ;;
   esac
   upload_url=$(jq -er --arg target "$target" '.[] | select(.target == $target) | .url' "$BUILDBOX_UPLOADS_JSON") || die "missing upload url for target: $target"
   [[ -f "$artifact_path" ]] || die "artifact not found: $artifact_path"
+
+  artifact_sha256=$(sha256sum "$artifact_path" | awk '{print $1}')
+  artifact_byte_size=$(wc -c <"$artifact_path" | tr -d '[:space:]')
+  jq -n \
+    --arg target "$target" \
+    --arg path "$artifact_path" \
+    --arg fileName "$artifact_file_name" \
+    --arg sha256 "sha256:$artifact_sha256" \
+    --argjson byteSize "$artifact_byte_size" \
+    '{target: $target, path: $path, fileName: $fileName, sha256: $sha256, byteSize: $byteSize}' \
+    >"$VERIFIED_DIR/$target.json"
 
   CURL_ARGS=(--fail --silent --show-error --request PUT)
   while IFS= read -r encoded; do
@@ -41,3 +63,5 @@ while IFS= read -r target; do
   curl "${CURL_ARGS[@]}" --upload-file "$artifact_path" "$upload_url"
   printf 'Uploaded %s for run %s\n' "$target" "$BUILDBOX_RUN_ID"
 done < <(jq -r '.[]' "$BUILDBOX_TARGETS_JSON")
+
+jq -s '.' "$VERIFIED_DIR"/*.json >"$BUILDBOX_ARTIFACTS_JSON"

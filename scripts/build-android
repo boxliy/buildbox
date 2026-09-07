@@ -92,6 +92,10 @@ mkdir -p "$ARTIFACT_DIR"
 [[ -d "$SWAN_DIR" ]] || die "Swan app directory not found at $SWAN_DIR"
 
 mkdir -p "${NATIVE_MANIFEST%/*}"
+if jq -e 'any(.config.appProfile.deviceCapabilities[]?; .key == "deep_links.verified")' "$BUILDBOX_SPEC_JSON" >/dev/null; then
+  die 'deep_links.verified requires domain configuration that is not supported in phase one'
+fi
+HAS_CUSTOM_SCHEME=$(jq -r 'any(.config.appProfile.deviceCapabilities[]?; .key == "deep_links.custom_scheme")' "$BUILDBOX_SPEC_JSON")
 {
   printf '%s\n' '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
   jq -r '.config.appProfile.deviceCapabilities[]?.key' "$BUILDBOX_SPEC_JSON" | while IFS= read -r capability; do
@@ -121,10 +125,25 @@ mkdir -p "${NATIVE_MANIFEST%/*}"
         printf '%s\n' '  <uses-permission android:name="android.permission.WAKE_LOCK" />'
         printf '%s\n' '  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />'
         ;;
-      files.open | files.save | deep_links.custom_scheme | deep_links.verified) ;;
+      biometrics.authenticate)
+        printf '%s\n' '  <uses-permission android:name="android.permission.USE_BIOMETRIC" />'
+        ;;
+      files.open | files.save | deep_links.custom_scheme) ;;
       *) die "unsupported native capability: $capability" ;;
     esac
   done
+  if [[ "$HAS_CUSTOM_SCHEME" == "true" ]]; then
+    printf '%s\n' '  <application>'
+    printf '%s\n' '    <activity android:name=".MainActivity">'
+    printf '%s\n' '      <intent-filter>'
+    printf '%s\n' '        <action android:name="android.intent.action.VIEW" />'
+    printf '%s\n' '        <category android:name="android.intent.category.DEFAULT" />'
+    printf '%s\n' '        <category android:name="android.intent.category.BROWSABLE" />'
+    printf '        <data android:scheme="%s" />\n' "$BUILDBOX_ANDROID_APPLICATION_ID"
+    printf '%s\n' '      </intent-filter>'
+    printf '%s\n' '    </activity>'
+    printf '%s\n' '  </application>'
+  fi
   printf '%s\n' '</manifest>'
 } >"$NATIVE_MANIFEST"
 

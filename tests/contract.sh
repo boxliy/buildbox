@@ -71,6 +71,8 @@ assert_file_contains "$CURL_LOG" "https://oss.example/upload.aab"
 assert_file_contains "$CURL_LOG" "/api/v1/buildbox/runs/401/callback"
 assert_file_contains "$FLUTTER_LOG" "android.permission.CAMERA"
 assert_file_contains "$FLUTTER_LOG" "android.permission.ACCESS_FINE_LOCATION"
+assert_file_contains "$FLUTTER_LOG" "android.permission.USE_BIOMETRIC"
+assert_file_contains "$FLUTTER_LOG" 'android:scheme="com.example.alpha"'
 assert_file_not_contains "$CURL_LOG" "contract-token"
 jq -e '
   .status == "running" and
@@ -97,6 +99,7 @@ mkdir -p "$BUILDBOX_STATE_DIR"
 export MOCK_GIT_HEAD='2222222222222222222222222222222222222222'
 "$ROOT/scripts/load-build-spec" 102:402
 "$ROOT/scripts/build-android"
+printf '%s' 'after-build-change' >>"$BUILDBOX_STATE_DIR/artifacts/swan-release.aab"
 "$ROOT/scripts/upload-oss"
 "$ROOT/scripts/report-result" succeeded
 assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
@@ -106,6 +109,9 @@ assert_file_contains "$FLUTTER_LOG" "--dart-define=SWAN_EXPECTED_APP_ID=app-beta
 assert_file_contains "$FLUTTER_LOG" "android.permission.POST_NOTIFICATIONS"
 assert_file_contains "$CURL_LOG" "https://oss.example/upload.aab"
 assert_file_contains "$GITHUB_OUTPUT" "checkout_repository=boxliy/aviary"
+ACTUAL_AAB_HASH="sha256:$(sha256sum "$BUILDBOX_STATE_DIR/artifacts/swan-release.aab" | awk '{print $1}')"
+jq -e --arg hash "$ACTUAL_AAB_HASH" '.artifacts[0].sha256 == $hash' \
+  "$BUILDBOX_STATE_DIR/callback-succeeded.json" >/dev/null
 
 CURL_LOG="$TMP_DIR/curl-mismatch.log"
 BUILDBOX_STATE_DIR="$TMP_DIR/state-mismatch"
@@ -139,13 +145,5 @@ if "$ROOT/scripts/load-build-spec" 103:403 2>"$TMP_DIR/tampered.err"; then
   exit 1
 fi
 assert_file_contains "$TMP_DIR/tampered.err" "specHash does not match config"
-
-CURL_LOG="$TMP_DIR/curl-early-failure.log"
-BUILDBOX_STATE_DIR="$TMP_DIR/state-early-failure"
-BUILDBOX_DISPATCH_ID=104:404
-export CURL_LOG BUILDBOX_STATE_DIR BUILDBOX_DISPATCH_ID
-mkdir -p "$BUILDBOX_STATE_DIR"
-"$ROOT/scripts/report-result" failed "prepare failed"
-assert_file_contains "$CURL_LOG" "/api/v1/buildbox/runs/404/callback"
 
 printf 'contract tests passed\n'

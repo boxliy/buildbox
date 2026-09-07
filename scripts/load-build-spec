@@ -64,6 +64,7 @@ SPEC_HASH=$(json_get_required '.specHash' specHash)
 ARTIFACT_PREFIX=$(json_get_required '.artifactPrefix' artifactPrefix)
 ANDROID_APPLICATION_ID=$(json_get_required '.config.androidApplicationId' config.androidApplicationId)
 APP_DISPLAY_NAME=$(json_get_required '.config.appDisplayName' config.appDisplayName)
+[[ "$ANDROID_APPLICATION_ID" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || die 'androidApplicationId is invalid'
 
 CONFIG_COMPACT=$(jq -ceS '.config | objects' "$SPEC_RESPONSE") || die 'config must be an object'
 ACTUAL_SPEC_HASH="sha256:$(printf '%s' "$CONFIG_COMPACT" | sha256sum | awk '{print $1}')"
