@@ -96,6 +96,8 @@ if jq -e 'any(.config.appProfile.deviceCapabilities[]?; .key == "deep_links.veri
   die 'deep_links.verified requires domain configuration that is not supported in phase one'
 fi
 HAS_CUSTOM_SCHEME=$(jq -r 'any(.config.appProfile.deviceCapabilities[]?; .key == "deep_links.custom_scheme")' "$BUILDBOX_SPEC_JSON")
+CUSTOM_SCHEME=${BUILDBOX_ANDROID_APPLICATION_ID//_/-}
+[[ "$CUSTOM_SCHEME" =~ ^[A-Za-z][A-Za-z0-9+.-]*$ ]] || die 'derived custom URL scheme is invalid'
 {
   printf '%s\n' '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
   jq -r '.config.appProfile.deviceCapabilities[]?.key' "$BUILDBOX_SPEC_JSON" | while IFS= read -r capability; do
@@ -139,7 +141,7 @@ HAS_CUSTOM_SCHEME=$(jq -r 'any(.config.appProfile.deviceCapabilities[]?; .key ==
     printf '%s\n' '        <action android:name="android.intent.action.VIEW" />'
     printf '%s\n' '        <category android:name="android.intent.category.DEFAULT" />'
     printf '%s\n' '        <category android:name="android.intent.category.BROWSABLE" />'
-    printf '        <data android:scheme="%s" />\n' "$BUILDBOX_ANDROID_APPLICATION_ID"
+    printf '        <data android:scheme="%s" />\n' "$CUSTOM_SCHEME"
     printf '%s\n' '      </intent-filter>'
     printf '%s\n' '    </activity>'
     printf '%s\n' '  </application>'

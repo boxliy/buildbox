@@ -7,9 +7,9 @@
   "commitSha": "1111111111111111111111111111111111111111",
   "targets": ["android_apk", "android_aab"],
   "artifactPrefix": "builds/spec-apk-1/build-apk-1/",
-  "specHash": "sha256:a00afc957453382426001de116cad26dce2fe2e7c572b2e0d82e11abd56e00f1",
+  "specHash": "sha256:fc8142fd6c7866fc7eb5b6d757eaad29dc65a03ff28aaae4eee5c4a86345f804",
   "config": {
-    "androidApplicationId": "com.example.alpha",
+    "androidApplicationId": "com.example_alpha",
     "appDisplayName": "Alpha App",
     "appId": "101",
     "appProfile": {

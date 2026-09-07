@@ -63,7 +63,7 @@ assert_file_contains "$GITHUB_OUTPUT" "targets=android_apk,android_aab"
 [[ "$(cat "$GITHUB_ENV")" == "UNCHANGED=1" ]]
 assert_file_contains "$FLUTTER_LOG" "build apk --release"
 assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
-assert_file_contains "$FLUTTER_LOG" "SWAN_ANDROID_APPLICATION_ID=com.example.alpha"
+assert_file_contains "$FLUTTER_LOG" "SWAN_ANDROID_APPLICATION_ID=com.example_alpha"
 assert_file_contains "$FLUTTER_LOG" "SWAN_APP_DISPLAY_NAME=Alpha\\ App"
 assert_file_contains "$FLUTTER_LOG" "--dart-define=SWAN_EXPECTED_APP_ID=app-alpha"
 assert_file_contains "$CURL_LOG" "https://oss.example/upload.apk"
@@ -72,7 +72,7 @@ assert_file_contains "$CURL_LOG" "/api/v1/buildbox/runs/401/callback"
 assert_file_contains "$FLUTTER_LOG" "android.permission.CAMERA"
 assert_file_contains "$FLUTTER_LOG" "android.permission.ACCESS_FINE_LOCATION"
 assert_file_contains "$FLUTTER_LOG" "android.permission.USE_BIOMETRIC"
-assert_file_contains "$FLUTTER_LOG" 'android:scheme="com.example.alpha"'
+assert_file_contains "$FLUTTER_LOG" 'android:scheme="com.example-alpha"'
 assert_file_not_contains "$CURL_LOG" "contract-token"
 jq -e '
   .status == "running" and
