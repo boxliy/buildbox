@@ -1,0 +1,45 @@
+{
+  "id": "102",
+  "releaseId": "202",
+  "tenantId": "402",
+  "appId": "102",
+  "sourceRepo": "boxliy/aviary",
+  "commitSha": "2222222222222222222222222222222222222222",
+  "targets": ["android_aab"],
+  "artifactPrefix": "builds/spec-aab-1/build-aab-1/",
+  "specHash": "sha256:554cdba1093f3e1be3d8657e4d9028049d6498535bb4b47097cb11c7e2e95041",
+  "config": {
+    "androidApplicationId": "com.example.beta",
+    "appDisplayName": "Beta App",
+    "appId": "102",
+    "appProfile": {
+      "deviceCapabilities": [
+        {"key": "notifications.push", "requirement": "required"}
+      ]
+    },
+    "artifactPrefix": "builds/spec-aab-1/",
+    "commitSha": "2222222222222222222222222222222222222222",
+    "dartDefines": {
+      "SWAN_APP_PUBLIC_ID": "tenant-beta.app-beta",
+      "SWAN_EXPECTED_APP_ID": "app-beta",
+      "SWAN_EXPECTED_TENANT_ID": "tenant-beta",
+      "SWAN_HAWK_BASE_URL": "https://hawk.example"
+    },
+    "releaseId": "202",
+    "sourceRepo": "boxliy/aviary",
+    "storageProfileId": "302",
+    "targets": ["android_aab"],
+    "tenantId": "402"
+  },
+  "runId": "402",
+  "callbackUrl": "/api/v1/buildbox/runs/402/callback",
+  "uploads": [
+    {
+      "target": "android_aab",
+      "objectKey": "builds/spec-aab-1/build-aab-1/android_aab.aab",
+      "url": "https://oss.example/upload.aab",
+      "contentType": "application/octet-stream",
+      "headers": {}
+    }
+  ]
+}

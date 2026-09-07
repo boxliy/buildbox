@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+set +x
+
+usage() {
+  printf 'usage: %s <running|succeeded|failed> [message]\n' "${0##*/}" >&2
+}
+
+die() {
+  printf 'report-result: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+[[ $# -ge 1 && $# -le 2 ]] || { usage; exit 64; }
+
+STATUS=$1
+MESSAGE=${2:-}
+case "$STATUS" in
+  running | succeeded | failed) ;;
+  *) die "status must be running, succeeded, or failed" ;;
+esac
+
+[[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
+[[ -n "${HAWK_BUILDBOX_TOKEN:-}" ]] || die 'HAWK_BUILDBOX_TOKEN is required'
+[[ -n "${BUILDBOX_GITHUB_RUN_ID:-}" ]] || die 'BUILDBOX_GITHUB_RUN_ID is required'
+[[ "$BUILDBOX_GITHUB_RUN_ID" =~ ^[0-9]+$ ]] || die 'BUILDBOX_GITHUB_RUN_ID must be an integer'
+
+require_command curl
+require_command jq
+
+STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
+SPEC_ENV="$STATE_DIR/spec.env"
+[[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
+# shellcheck disable=SC1090
+source "$SPEC_ENV"
+
+BUILDBOX_ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
+
+PAYLOAD="$STATE_DIR/callback-${STATUS}.json"
+BASE_URL=${HAWK_BASE_URL%/}
+CALLBACK_URL="$BASE_URL/api/v1/buildbox/runs/$BUILDBOX_RUN_ID/callback"
+
+if [[ "$STATUS" == "succeeded" ]]; then
+  [[ -n "${BUILDBOX_ARTIFACTS_JSON:-}" ]] || die 'missing artifacts metadata for success callback'
+  jq -n \
+    --arg status "$STATUS" \
+    --argjson githubRunId "$BUILDBOX_GITHUB_RUN_ID" \
+    --slurpfile artifacts "$BUILDBOX_ARTIFACTS_JSON" \
+    --slurpfile uploads "$BUILDBOX_UPLOADS_JSON" \
+    '{
+      status: $status,
+      githubRunId: $githubRunId,
+      artifacts: (
+        $artifacts[0] |
+        map(
+          . as $artifact |
+          ($uploads[0][] | select(.target == $artifact.target)) as $upload |
+          {
+            target: $artifact.target,
+            fileName: $artifact.fileName,
+            contentType: $upload.contentType,
+            byteSize: $artifact.byteSize,
+            sha256: $artifact.sha256,
+            objectKey: $upload.objectKey,
+          }
+        )
+      )
+    }' >"$PAYLOAD"
+elif [[ "$STATUS" == "failed" ]]; then
+  jq -n \
+    --arg status "$STATUS" \
+    --argjson githubRunId "$BUILDBOX_GITHUB_RUN_ID" \
+    --arg message "$MESSAGE" \
+    '{
+      status: $status,
+      githubRunId: $githubRunId,
+      artifacts: [],
+      errorCode: "BUILD_FAILED",
+      errorMessage: $message
+    }' >"$PAYLOAD"
+else
+  jq -n \
+    --arg status "$STATUS" \
+    --argjson githubRunId "$BUILDBOX_GITHUB_RUN_ID" \
+    '{status: $status, githubRunId: $githubRunId, artifacts: []}' >"$PAYLOAD"
+fi
+
+curl --fail --silent --show-error \
+  --request POST \
+  --header "Authorization: Bearer $HAWK_BUILDBOX_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data-binary "@$PAYLOAD" \
+  "$CALLBACK_URL"
+
+printf 'Reported %s for run %s\n' "$STATUS" "$BUILDBOX_RUN_ID"

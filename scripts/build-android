@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+set +x
+
+die() {
+  printf 'build-android: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+build_target() {
+  local target=$1
+  local artifact_glob
+  local artifact_name
+  local artifact_path
+  local artifact_file_name
+  local canonical_artifact
+  local artifact_sha256
+  local artifact_byte_size
+
+  case "$target" in
+    android_apk)
+      FLUTTER_TARGET=(build apk --release)
+      artifact_glob='build/app/outputs/flutter-apk/app-release.apk'
+      artifact_name='swan-release.apk'
+      ;;
+    android_aab)
+      FLUTTER_TARGET=(build appbundle --release)
+      artifact_glob='build/app/outputs/bundle/release/app-release.aab'
+      artifact_name='swan-release.aab'
+      ;;
+    *)
+      die "unsupported artifact target: $target"
+      ;;
+  esac
+
+  (
+    cd "$SWAN_DIR"
+    SWAN_ANDROID_APPLICATION_ID="$BUILDBOX_ANDROID_APPLICATION_ID" \
+      SWAN_APP_DISPLAY_NAME="$BUILDBOX_APP_DISPLAY_NAME" \
+      SWAN_ARTIFACT_KIND=unsigned_release \
+      "${FLUTTER_CMD[@]}" "${FLUTTER_TARGET[@]}" "${DEFINE_ARGS[@]}"
+  )
+
+  artifact_path="$SWAN_DIR/$artifact_glob"
+  [[ -f "$artifact_path" ]] || die "expected artifact missing: $artifact_path"
+
+  artifact_sha256=$(sha256sum "$artifact_path" | awk '{print $1}')
+  artifact_byte_size=$(wc -c <"$artifact_path" | tr -d '[:space:]')
+  canonical_artifact="$ARTIFACT_DIR/$artifact_name"
+  cp "$artifact_path" "$canonical_artifact"
+  artifact_file_name=${canonical_artifact##*/}
+
+  jq -n \
+    --arg target "$target" \
+    --arg path "$canonical_artifact" \
+    --arg fileName "$artifact_file_name" \
+    --arg sha256 "sha256:$artifact_sha256" \
+    --argjson byteSize "$artifact_byte_size" \
+    '{target: $target, path: $path, fileName: $fileName, sha256: $sha256, byteSize: $byteSize}' \
+    >"$ARTIFACT_DIR/$target.json"
+
+  printf 'Built %s (%s bytes, sha256 %s)\n' "$canonical_artifact" "$artifact_byte_size" "$artifact_sha256"
+}
+
+STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
+SPEC_ENV="$STATE_DIR/spec.env"
+[[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
+# shellcheck disable=SC1090
+source "$SPEC_ENV"
+BUILDBOX_SPEC_JSON="$STATE_DIR/spec.json"
+BUILDBOX_TARGETS_JSON="$STATE_DIR/targets.json"
+BUILDBOX_DART_DEFINES_JSON="$STATE_DIR/dart-defines.json"
+BUILDBOX_SWAN_CONFIG_JSON="$STATE_DIR/swan-config.json"
+
+require_command git
+require_command jq
+require_command sha256sum
+require_command wc
+
+SOURCE_ROOT=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:-$PWD}/aviary-source}
+SWAN_DIR=${BUILDBOX_SWAN_DIR:-$SOURCE_ROOT/waterfowl/apps/swan}
+ARTIFACT_DIR="$STATE_DIR/artifacts"
+ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
+NATIVE_MANIFEST="$SWAN_DIR/android/app/src/release/AndroidManifest.xml"
+mkdir -p "$ARTIFACT_DIR"
+
+[[ -d "$SOURCE_ROOT/.git" ]] || die "Aviary source checkout not found at $SOURCE_ROOT"
+[[ -d "$SWAN_DIR" ]] || die "Swan app directory not found at $SWAN_DIR"
+
+mkdir -p "${NATIVE_MANIFEST%/*}"
+if jq -e 'any(.config.appProfile.deviceCapabilities[]?; .key == "deep_links.verified")' "$BUILDBOX_SPEC_JSON" >/dev/null; then
+  die 'deep_links.verified requires domain configuration that is not supported in phase one'
+fi
+HAS_CUSTOM_SCHEME=$(jq -r 'any(.config.appProfile.deviceCapabilities[]?; .key == "deep_links.custom_scheme")' "$BUILDBOX_SPEC_JSON")
+CUSTOM_SCHEME=${BUILDBOX_ANDROID_APPLICATION_ID//_/-}
+[[ "$CUSTOM_SCHEME" =~ ^[A-Za-z][A-Za-z0-9+.-]*$ ]] || die 'derived custom URL scheme is invalid'
+{
+  printf '%s\n' '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+  jq -r '.config.appProfile.deviceCapabilities[]?.key' "$BUILDBOX_SPEC_JSON" | while IFS= read -r capability; do
+    case "$capability" in
+      camera.capture) printf '%s\n' '  <uses-permission android:name="android.permission.CAMERA" />' ;;
+      microphone.record) printf '%s\n' '  <uses-permission android:name="android.permission.RECORD_AUDIO" />' ;;
+      location.foreground)
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />'
+        ;;
+      location.background)
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />'
+        ;;
+      notifications.local | notifications.push)
+        printf '%s\n' '  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
+        ;;
+      photos.read)
+        printf '%s\n' '  <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />'
+        ;;
+      photos.write)
+        printf '%s\n' '  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />'
+        ;;
+      background.execution)
+        printf '%s\n' '  <uses-permission android:name="android.permission.WAKE_LOCK" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />'
+        ;;
+      biometrics.authenticate)
+        printf '%s\n' '  <uses-permission android:name="android.permission.USE_BIOMETRIC" />'
+        ;;
+      files.open | files.save | deep_links.custom_scheme) ;;
+      *) die "unsupported native capability: $capability" ;;
+    esac
+  done
+  if [[ "$HAS_CUSTOM_SCHEME" == "true" ]]; then
+    printf '%s\n' '  <application>'
+    printf '%s\n' '    <activity android:name=".MainActivity">'
+    printf '%s\n' '      <intent-filter>'
+    printf '%s\n' '        <action android:name="android.intent.action.VIEW" />'
+    printf '%s\n' '        <category android:name="android.intent.category.DEFAULT" />'
+    printf '%s\n' '        <category android:name="android.intent.category.BROWSABLE" />'
+    printf '        <data android:scheme="%s" />\n' "$CUSTOM_SCHEME"
+    printf '%s\n' '      </intent-filter>'
+    printf '%s\n' '    </activity>'
+    printf '%s\n' '  </application>'
+  fi
+  printf '%s\n' '</manifest>'
+} >"$NATIVE_MANIFEST"
+
+ACTUAL_SHA=$(git -C "$SOURCE_ROOT" rev-parse HEAD)
+if [[ "$ACTUAL_SHA" != "$BUILDBOX_COMMIT_SHA" ]]; then
+  die "checked out HEAD $ACTUAL_SHA does not match spec commit $BUILDBOX_COMMIT_SHA"
+fi
+
+DEFINE_ARGS=()
+while IFS= read -r encoded; do
+  key=$(printf '%s' "$encoded" | base64 --decode | jq -r '.[0]')
+  value=$(printf '%s' "$encoded" | base64 --decode | jq -r '.[1] | tostring')
+  DEFINE_ARGS+=("--dart-define=${key}=${value}")
+done < <(jq -r 'to_entries[] | [.key, .value] | @base64' "$BUILDBOX_DART_DEFINES_JSON")
+
+if [[ "$(jq 'length' "$BUILDBOX_SWAN_CONFIG_JSON")" != "0" ]]; then
+  SWAN_CONFIG_COMPACT=$(jq -c '.' "$BUILDBOX_SWAN_CONFIG_JSON")
+  DEFINE_ARGS+=("--dart-define=SWAN_CONFIG_JSON=${SWAN_CONFIG_COMPACT}")
+fi
+
+if command -v fvm >/dev/null 2>&1 && [[ -e "$SWAN_DIR/.fvm" || -e "$SOURCE_ROOT/.fvm" ]]; then
+  FLUTTER_CMD=(fvm flutter)
+else
+  require_command flutter
+  FLUTTER_CMD=(flutter)
+fi
+
+while IFS= read -r target; do
+  build_target "$target"
+done < <(jq -r '.[]' "$BUILDBOX_TARGETS_JSON")
+
+jq -s '.' "$ARTIFACT_DIR"/*.json >"$ARTIFACTS_JSON"

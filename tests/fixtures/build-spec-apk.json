@@ -1,0 +1,61 @@
+{
+  "id": "101",
+  "releaseId": "201",
+  "tenantId": "401",
+  "appId": "101",
+  "sourceRepo": "boxliy/aviary",
+  "commitSha": "1111111111111111111111111111111111111111",
+  "targets": ["android_apk", "android_aab"],
+  "artifactPrefix": "builds/spec-apk-1/build-apk-1/",
+  "specHash": "sha256:fc8142fd6c7866fc7eb5b6d757eaad29dc65a03ff28aaae4eee5c4a86345f804",
+  "config": {
+    "androidApplicationId": "com.example_alpha",
+    "appDisplayName": "Alpha App",
+    "appId": "101",
+    "appProfile": {
+      "deviceCapabilities": [
+        {"key": "camera.capture", "requirement": "required"},
+        {"key": "location.foreground", "requirement": "optional"},
+        {"key": "biometrics.authenticate", "requirement": "optional"},
+        {"key": "deep_links.custom_scheme", "requirement": "optional"}
+      ]
+    },
+    "artifactPrefix": "builds/spec-apk-1/",
+    "commitSha": "1111111111111111111111111111111111111111",
+    "dartDefines": {
+      "SWAN_APP_PUBLIC_ID": "tenant-alpha.app-alpha",
+      "SWAN_EXPECTED_APP_ID": "app-alpha",
+      "SWAN_EXPECTED_TENANT_ID": "tenant-alpha",
+      "SWAN_HAWK_BASE_URL": "https://hawk.example"
+    },
+    "releaseId": "201",
+    "sourceRepo": "boxliy/aviary",
+    "storageProfileId": "301",
+    "targets": ["android_apk", "android_aab"],
+    "tenantId": "401"
+  },
+  "runId": "401",
+  "callbackUrl": "/api/v1/buildbox/runs/401/callback",
+  "uploads": [
+    {
+      "target": "android_apk",
+      "objectKey": "builds/spec-apk-1/build-apk-1/android_apk.apk",
+      "url": "https://oss.example/upload.apk",
+      "contentType": "application/vnd.android.package-archive",
+      "headers": {
+        "Content-Type": "application/vnd.android.package-archive",
+        "x-oss-meta-build-spec": "spec-apk-1"
+      }
+    },
+    {
+      "target": "android_aab",
+      "objectKey": "builds/spec-apk-1/build-apk-1/android_aab.aab",
+      "url": "https://oss.example/upload.aab",
+      "contentType": "application/octet-stream",
+      "headers": {
+        "Content-Type": "application/octet-stream",
+        "x-oss-meta-build-spec": "spec-apk-1"
+      }
+    }
+  ]
+}

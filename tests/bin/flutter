@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+LOG=${FLUTTER_LOG:?FLUTTER_LOG is required}
+printf 'SWAN_ANDROID_APPLICATION_ID=%q SWAN_APP_DISPLAY_NAME=%q SWAN_ARTIFACT_KIND=%q ' \
+  "${SWAN_ANDROID_APPLICATION_ID:-}" "${SWAN_APP_DISPLAY_NAME:-}" "${SWAN_ARTIFACT_KIND:-}" \
+  >>"$LOG"
+if [[ -f android/app/src/release/AndroidManifest.xml ]]; then
+  tr '\n' ' ' <android/app/src/release/AndroidManifest.xml >>"$LOG"
+  printf ' ' >>"$LOG"
+fi
+printf '%q ' "$0" "$@" >>"$LOG"
+printf '\n' >>"$LOG"
+
+if [[ "$1" == "build" && "$2" == "apk" ]]; then
+  mkdir -p build/app/outputs/flutter-apk
+  printf 'contract apk\n' >build/app/outputs/flutter-apk/app-release.apk
+  exit 0
+fi
+
+if [[ "$1" == "build" && "$2" == "appbundle" ]]; then
+  mkdir -p build/app/outputs/bundle/release
+  printf 'contract aab\n' >build/app/outputs/bundle/release/app-release.aab
+  exit 0
+fi
+
+printf 'unexpected flutter call\n' >&2
+exit 1

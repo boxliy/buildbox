@@ -1,1 +1,93 @@
 # buildbox
+
+Buildbox contains the GitHub Actions runner contract for immutable Hawk build
+specs. The first supported target is Swan Android artifacts.
+
+## Android workflow
+
+Run `.github/workflows/build.yml` manually with one input:
+
+- `build_spec_id`: Hawk-issued `<spec_id>:<run_id>` identity for one immutable attempt
+
+No repository, commit, upload URL, token, or business configuration is accepted
+as workflow input. Runtime authority comes from these repository secrets:
+
+- `HAWK_BASE_URL`
+- `HAWK_BUILDBOX_TOKEN`
+- `AVIARY_SOURCE_TOKEN`: read-only access to the private Aviary repository
+
+The workflow separates trusted prepare/finalize work from compilation onto
+different runners, so code from the selected Aviary commit never shares a
+runner with the long-lived Hawk token. It:
+
+1. Loads the exact immutable build spec attempt from
+   `GET /api/v1/buildbox/build-specs/{id}?run_id={runId}`.
+2. Checks out `sourceRepo` at `commitSha` into `aviary-source` with a read-only token.
+3. Verifies `HEAD` exactly matches `commitSha` and is reachable from trusted
+   `origin/main`.
+4. Builds each requested target from `waterfowl/apps/swan`, generating a
+   release manifest overlay from the frozen native capability list.
+5. Computes SHA-256 and byte size for each artifact.
+6. Uploads each artifact with its matching presigned `PUT` URL and headers.
+7. Posts a running callback followed by a success or failure callback to
+   `POST /api/v1/buildbox/runs/{runId}/callback`.
+
+## Hawk response contract
+
+`scripts/load-build-spec` requires the response to expose these fields:
+
+- `sourceRepo`: GitHub `owner/repo`, `https://github.com/owner/repo.git`, or
+  `git@github.com:owner/repo.git`
+- `commitSha`: full 40-character commit SHA
+- `targets`: 1-2 unique values from `android_apk` and `android_aab`
+- `runId`
+- `config`: immutable build input object
+- `specHash`: SHA-256 of the canonical JSON `config`; the loader verifies it
+- `uploads`: an array with an entry matching the target
+- `artifactPrefix`: attempt-specific immutable object prefix
+- `uploads[].url`: presigned `PUT` URL
+- `uploads[].contentType`: artifact content type
+- `uploads[].headers`: presigned upload headers as an object
+
+Optional config fields:
+
+- `config.dartDefines` as an object
+- `config.swanConfig` as an object
+
+`dartDefines` entries are passed to every Flutter build as
+`--dart-define=KEY=VALUE`.
+`swanConfig`, when present, is passed as a compact JSON value through
+`--dart-define=SWAN_CONFIG_JSON=...`.
+
+The immutable config must include `androidApplicationId` and `appDisplayName`.
+Buildbox exports them only to the Flutter build as
+`SWAN_ANDROID_APPLICATION_ID` and `SWAN_APP_DISPLAY_NAME`; runtime identity,
+Hawk origin, release channel, feature keys, capabilities, and trusted release
+keys are supplied through `config.dartDefines`.
+
+Success callbacks send:
+
+- `status: "succeeded"`
+- `githubRunId`
+- `artifacts[]` with `target`, `fileName`, `contentType`, `byteSize`,
+  `sha256`, and `objectKey`
+
+Before compiling, the workflow sends `status: "running"`, `githubRunId`, and an
+empty `artifacts` array.
+
+Failure callbacks send:
+
+- `status: "failed"`
+- `githubRunId`
+- `artifacts: []`
+- `errorCode: "BUILD_FAILED"`
+- `errorMessage`
+
+## Local contract tests
+
+The tests use fixtures and mock commands only; they do not call Hawk, Flutter, or
+OSS.
+
+```sh
+tests/contract.sh
+```

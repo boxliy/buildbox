@@ -1,0 +1,158 @@
+name: Build Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_spec_id:
+        description: Hawk build spec id
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      checkout_repository: ${{ steps.spec.outputs.checkout_repository }}
+      commit_sha: ${{ steps.spec.outputs.commit_sha }}
+    env:
+      BUILDBOX_STATE_DIR: ${{ runner.temp }}/buildbox
+      BUILDBOX_DISPATCH_ID: ${{ inputs.build_spec_id }}
+      BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Checkout buildbox
+        uses: actions/checkout@v4
+
+      - name: Load build spec
+        id: spec
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
+        run: scripts/load-build-spec "$BUILDBOX_DISPATCH_ID"
+
+      - name: Report running
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
+        run: scripts/report-result running
+
+      - name: Preserve trusted build inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-input-${{ github.run_id }}
+          path: ${{ runner.temp }}/buildbox
+          include-hidden-files: true
+          retention-days: 1
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BUILDBOX_STATE_DIR: ${{ runner.temp }}/buildbox
+      BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Checkout buildbox
+        uses: actions/checkout@v4
+
+      - name: Restore trusted build inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: build-input-${{ github.run_id }}
+          path: ${{ runner.temp }}/buildbox
+
+      - name: Checkout Aviary source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.prepare.outputs.checkout_repository }}
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+          path: aviary-source
+          token: ${{ secrets.AVIARY_SOURCE_TOKEN }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify trusted source revision
+        shell: bash
+        run: |
+          git -C aviary-source rev-parse --verify refs/remotes/origin/main
+          git -C aviary-source merge-base --is-ancestor HEAD refs/remotes/origin/main
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: aviary-source/waterfowl/.fvmrc
+          cache: true
+
+      - name: Build Android artifacts
+        shell: bash
+        run: scripts/build-android
+
+      - name: Preserve untrusted build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/buildbox/artifacts
+          retention-days: 1
+
+  finalize:
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BUILDBOX_STATE_DIR: ${{ runner.temp }}/buildbox
+      BUILDBOX_DISPATCH_ID: ${{ inputs.build_spec_id }}
+      BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Checkout buildbox
+        uses: actions/checkout@v4
+
+      - name: Restore trusted build inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: build-input-${{ github.run_id }}
+          path: ${{ runner.temp }}/buildbox
+
+      - name: Restore build outputs
+        if: ${{ needs.build.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output-${{ github.run_id }}
+          path: ${{ runner.temp }}/buildbox
+
+      - name: Refresh upload authorization
+        if: ${{ needs.build.result == 'success' }}
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
+        run: scripts/load-build-spec "$BUILDBOX_DISPATCH_ID"
+
+      - name: Upload Android artifacts
+        if: ${{ needs.build.result == 'success' }}
+        run: scripts/upload-oss
+
+      - name: Report success
+        if: ${{ needs.build.result == 'success' }}
+        id: success
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
+        run: scripts/report-result succeeded
+
+      - name: Report workflow failure
+        if: ${{ needs.build.result != 'success' || failure() }}
+        shell: bash
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
+        run: scripts/report-result failed "Buildbox workflow failed in GitHub run $BUILDBOX_GITHUB_RUN_ID"
