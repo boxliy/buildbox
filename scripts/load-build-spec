@@ -3,7 +3,7 @@ set -Eeuo pipefail
 set +x
 
 usage() {
-  printf 'usage: %s <build_spec_id:run_id>\n' "${0##*/}" >&2
+  printf 'usage: %s <platform_run_id|build_spec_id:run_id>\n' "${0##*/}" >&2
 }
 
 die() {
@@ -30,9 +30,15 @@ json_get_required() {
 [[ $# -eq 1 ]] || { usage; exit 64; }
 
 DISPATCH_ID=$1
-[[ "$DISPATCH_ID" =~ ^([0-9]+):([0-9]+)$ ]] || die 'dispatch id must contain numeric build_spec_id:run_id'
-BUILD_SPEC_ID=${BASH_REMATCH[1]}
-EXPECTED_RUN_ID=${BASH_REMATCH[2]}
+if [[ "$DISPATCH_ID" =~ ^([0-9]+):([0-9]+)$ ]]; then
+  BUILD_SPEC_ID=${BASH_REMATCH[1]}
+  EXPECTED_RUN_ID=${BASH_REMATCH[2]}
+elif [[ "$DISPATCH_ID" =~ ^[0-9]+$ ]]; then
+  EXPECTED_RUN_ID=$DISPATCH_ID
+  BUILD_SPEC_ID=
+else
+  die 'dispatch id must be a platform run id or build_spec_id:run_id'
+fi
 [[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
 [[ -n "${HAWK_BUILDBOX_TOKEN:-}" ]] || die 'HAWK_BUILDBOX_TOKEN is required'
 
@@ -52,7 +58,11 @@ DART_DEFINES_JSON="$STATE_DIR/dart-defines.json"
 SWAN_CONFIG_JSON="$STATE_DIR/swan-config.json"
 
 BASE_URL=${HAWK_BASE_URL%/}
-SPEC_URL="$BASE_URL/api/v1/buildbox/build-specs/$BUILD_SPEC_ID?run_id=$EXPECTED_RUN_ID"
+if [[ -n "$BUILD_SPEC_ID" ]]; then
+  SPEC_URL="$BASE_URL/api/v1/buildbox/build-specs/$BUILD_SPEC_ID?run_id=$EXPECTED_RUN_ID"
+else
+  SPEC_URL="$BASE_URL/api/v1/buildbox/runs/$EXPECTED_RUN_ID/spec"
+fi
 
 curl --fail --silent --show-error \
   --header "Authorization: Bearer $HAWK_BUILDBOX_TOKEN" \
@@ -60,8 +70,8 @@ curl --fail --silent --show-error \
   --output "$SPEC_RESPONSE" \
   "$SPEC_URL"
 
-REPOSITORY=$(json_get_required '.sourceRepo' sourceRepo)
-COMMIT_SHA=$(json_get_required '.commitSha' commitSha)
+REPOSITORY=$(json_get_required '.sourceRepo // .config.sourceRepo' sourceRepo)
+COMMIT_SHA=$(json_get_required '.commitSha // .config.commitSha' commitSha)
 RUN_ID=$(json_get_required '.runId' runId)
 [[ "$RUN_ID" == "$EXPECTED_RUN_ID" ]] || die 'build spec response does not match dispatch run'
 SPEC_HASH=$(json_get_required '.specHash' specHash)
@@ -74,7 +84,7 @@ CONFIG_COMPACT=$(jq -ceS '.config | objects' "$SPEC_RESPONSE") || die 'config mu
 ACTUAL_SPEC_HASH="sha256:$(printf '%s' "$CONFIG_COMPACT" | sha256sum | awk '{print $1}')"
 [[ "$SPEC_HASH" == "$ACTUAL_SPEC_HASH" ]] || die 'specHash does not match config'
 
-TARGETS_RAW=$(jq -cer '.targets' "$SPEC_RESPONSE") || die 'targets must be a JSON array'
+TARGETS_RAW=$(jq -cer '.targets // .config.targets' "$SPEC_RESPONSE") || die 'targets must be a JSON array'
 TARGETS_COMPACT=$(printf '%s' "$TARGETS_RAW" | targets_canonicalize_json) \
   || die 'targets must contain 1-2 unique values from apk, aab, ipa (legacy android_apk/android_aab accepted)'
 

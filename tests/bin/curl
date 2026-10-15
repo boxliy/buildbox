@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$method:$url" in
-  GET:*'/api/v1/buildbox/build-specs/101?run_id=401')
+  GET:*'/api/v1/buildbox/build-specs/101?run_id=401' | GET:*'/api/v1/buildbox/runs/401/spec')
     cp "$FIXTURE_DIR/build-spec-apk.json" "$output"
     ;;
   GET:*'/api/v1/buildbox/build-specs/102?run_id=402')

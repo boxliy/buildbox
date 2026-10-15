@@ -6,8 +6,8 @@ name: Build Android
 on:
   workflow_dispatch:
     inputs:
-      build_spec_id:
-        description: Hawk build spec id (spec_id:run_id)
+      build_run_id:
+        description: Hawk platform workflow run id
         required: true
         type: string
   push:
@@ -29,7 +29,7 @@ jobs:
       commit_sha: ${{ steps.spec.outputs.commit_sha }}
     env:
       BUILDBOX_STATE_DIR: ${{ runner.temp }}/buildbox
-      BUILDBOX_DISPATCH_ID: ${{ inputs.build_spec_id }}
+      BUILDBOX_RUN_ID: ${{ inputs.build_run_id }}
       BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}
     steps:
       - name: Checkout buildbox
@@ -40,7 +40,7 @@ jobs:
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
           HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
-        run: scripts/load-build-spec "$BUILDBOX_DISPATCH_ID"
+        run: scripts/load-build-spec "$BUILDBOX_RUN_ID"
 
       - name: Refuse public artifact transport
         shell: bash
@@ -200,7 +200,7 @@ jobs:
     timeout-minutes: 15
     env:
       BUILDBOX_STATE_DIR: ${{ runner.temp }}/buildbox
-      BUILDBOX_DISPATCH_ID: ${{ inputs.build_spec_id }}
+      BUILDBOX_RUN_ID: ${{ inputs.build_run_id }}
       BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}
     steps:
       - name: Checkout buildbox
@@ -224,7 +224,7 @@ jobs:
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
           HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
-        run: scripts/load-build-spec "$BUILDBOX_DISPATCH_ID"
+        run: scripts/load-build-spec "$BUILDBOX_RUN_ID"
 
       - name: Upload signed artifacts
         if: ${{ needs.sign.result == 'success' }}

@@ -11,7 +11,7 @@ Run `.github/workflows/build.yml` manually with one input. A push that only
 changes this workflow file is skipped and does not start a product build.
 GitHub otherwise records that push as a failed run with zero jobs:
 
-- `build_spec_id`: Hawk-issued `<spec_id>:<run_id>` identity for one immutable attempt
+- `build_run_id`: Hawk platform workflow run id for one immutable attempt
 
 No repository, commit, upload URL, token, or business configuration is accepted
 as workflow input. Runtime authority comes from these repository secrets:

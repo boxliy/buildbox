@@ -304,4 +304,18 @@ jq -e '
   .errorMessage == "public repository cannot carry unsigned build artifacts"
 ' "$BUILDBOX_STATE_DIR/callback-failed.json" >/dev/null
 
+# A platform run id reaches the same frozen Spec without a caller-supplied spec id.
+CURL_LOG="$TMP_DIR/curl-run.log"
+BUILDBOX_STATE_DIR="$TMP_DIR/state-run"
+GITHUB_OUTPUT="$TMP_DIR/github-output-run.log"
+export CURL_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
+mkdir -p "$BUILDBOX_STATE_DIR"
+export MOCK_GIT_HEAD='1111111111111111111111111111111111111111'
+"$ROOT/scripts/load-build-spec" 401
+assert_file_contains "$CURL_LOG" '/api/v1/buildbox/runs/401/spec'
+if grep -F '/build-specs/' "$CURL_LOG" >/dev/null; then
+  printf 'a platform run id must not call the spec-id endpoint\n' >&2
+  exit 1
+fi
+
 printf 'contract tests passed\n'
