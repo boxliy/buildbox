@@ -15,6 +15,10 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/targets.sh
+source "$SCRIPT_DIR/lib/targets.sh"
+
 json_get_required() {
   local filter=$1
   local name=$2
@@ -70,23 +74,26 @@ CONFIG_COMPACT=$(jq -ceS '.config | objects' "$SPEC_RESPONSE") || die 'config mu
 ACTUAL_SPEC_HASH="sha256:$(printf '%s' "$CONFIG_COMPACT" | sha256sum | awk '{print $1}')"
 [[ "$SPEC_HASH" == "$ACTUAL_SPEC_HASH" ]] || die 'specHash does not match config'
 
-TARGETS_COMPACT=$(jq -cer '
-  .targets as $targets |
-  $targets |
-  select(type == "array" and length >= 1 and length <= 2) |
-  select(all(.[]; . == "android_apk" or . == "android_aab")) |
-  select((unique | length) == length)
-' "$SPEC_RESPONSE") || die 'targets must contain 1-2 unique Android targets: android_apk, android_aab'
+TARGETS_RAW=$(jq -cer '.targets' "$SPEC_RESPONSE") || die 'targets must be a JSON array'
+TARGETS_COMPACT=$(printf '%s' "$TARGETS_RAW" | targets_canonicalize_json) \
+  || die 'targets must contain 1-2 unique values from apk, aab, ipa (legacy android_apk/android_aab accepted)'
 
 jq -e \
   --arg repository "$REPOSITORY" \
   --arg commitSha "$COMMIT_SHA" \
   --arg artifactPrefix "$ARTIFACT_PREFIX" \
   --argjson targets "$TARGETS_COMPACT" \
-  '.config.sourceRepo == $repository and
-   .config.commitSha == $commitSha and
-   (.config.artifactPrefix as $base | $artifactPrefix | startswith($base)) and
-   .config.targets == $targets' \
+  --argjson configTargets "$(jq -c '.config.targets' "$SPEC_RESPONSE")" '
+  def canon($t):
+    if $t == "android_apk" then "apk"
+    elif $t == "android_aab" then "aab"
+    else $t
+    end;
+  .config.sourceRepo == $repository and
+  .config.commitSha == $commitSha and
+  (.config.artifactPrefix as $base | $artifactPrefix | startswith($base)) and
+  ($configTargets | map(canon(.))) == $targets
+' \
   "$SPEC_RESPONSE" >/dev/null || die 'signed config does not match build spec fields'
 
 UPLOADS_COMPACT=$(jq -cer --argjson targets "$TARGETS_COMPACT" --arg prefix "$ARTIFACT_PREFIX" '
@@ -96,7 +103,9 @@ UPLOADS_COMPACT=$(jq -cer --argjson targets "$TARGETS_COMPACT" --arg prefix "$AR
     if ($uploads | length) > 0 then
       (
         $uploads[] |
-        select(.target == $target) |
+        select(.target == $target or
+          (.target == "android_apk" and $target == "apk") or
+          (.target == "android_aab" and $target == "aab")) |
         {
           target: $target,
           objectKey: (.objectKey // ""),
@@ -111,15 +120,20 @@ UPLOADS_COMPACT=$(jq -cer --argjson targets "$TARGETS_COMPACT" --arg prefix "$AR
   select(all(.[];
     (.url | type == "string" and length > 0) and
     (.headers | type == "object") and
-    (if .target == "android_apk" then
-      .objectKey == ($prefix + "android_apk.apk") and
+    (if .target == "apk" then
+      .objectKey == ($prefix + "apk.apk") and
       .contentType == "application/vnd.android.package-archive"
-    else
-      .objectKey == ($prefix + "android_aab.aab") and
+    elif .target == "aab" then
+      .objectKey == ($prefix + "aab.aab") and
       .contentType == "application/octet-stream"
+    elif .target == "ipa" then
+      .objectKey == ($prefix + "ipa.ipa") and
+      .contentType == "application/octet-stream"
+    else
+      false
     end)
   ))
-' "$SPEC_RESPONSE") || die 'each target must have a matching presigned upload url, contentType, and object headers'
+' "$SPEC_RESPONSE") || die 'each target must have a matching presigned upload url, contentType, and object key'
 
 if [[ ! "$COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
   die "commitSha must be a full 40-character SHA"

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Copy the immutable, non-secret inputs for one later job.
+# compile and sign never receive the Hawk response body or presigned uploads.
+set -Eeuo pipefail
+set +x
+
+usage() {
+  printf 'usage: %s <compile|sign> <dest>\n' "${0##*/}" >&2
+}
+
+die() {
+  printf 'export-job-inputs: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ $# -eq 2 ]] || { usage; exit 64; }
+
+STAGE=$1
+DEST=$2
+case "$STAGE" in
+  compile | sign) ;;
+  *) die "stage must be compile or sign" ;;
+esac
+
+[[ ! -e "$DEST" ]] || die "destination already exists: $DEST"
+mkdir -p "$DEST"
+
+STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
+SPEC_ENV="$STATE_DIR/spec.env"
+[[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
+# shellcheck disable=SC1090
+source "$SPEC_ENV"
+
+command -v jq >/dev/null 2>&1 || die 'missing required command: jq'
+
+case "$STAGE" in
+  compile)
+    [[ -f "$STATE_DIR/spec.json" ]] || die 'missing spec.json'
+    [[ -f "$STATE_DIR/targets.json" ]] || die 'missing targets.json'
+    [[ -f "$STATE_DIR/dart-defines.json" ]] || die 'missing dart-defines.json'
+    [[ -f "$STATE_DIR/swan-config.json" ]] || die 'missing swan-config.json'
+    jq -e 'del(.uploads, .callbackUrl)' "$STATE_DIR/spec.json" >"$DEST/spec.json"
+    cp "$STATE_DIR/targets.json" "$DEST/targets.json"
+    cp "$STATE_DIR/dart-defines.json" "$DEST/dart-defines.json"
+    cp "$STATE_DIR/swan-config.json" "$DEST/swan-config.json"
+    {
+      printf 'BUILDBOX_SPEC_ID=%q\n' "$BUILDBOX_SPEC_ID"
+      printf 'BUILDBOX_REPOSITORY=%q\n' "$BUILDBOX_REPOSITORY"
+      printf 'BUILDBOX_CHECKOUT_REPOSITORY=%q\n' "$BUILDBOX_CHECKOUT_REPOSITORY"
+      printf 'BUILDBOX_COMMIT_SHA=%q\n' "$BUILDBOX_COMMIT_SHA"
+      printf 'BUILDBOX_TARGETS=%q\n' "$BUILDBOX_TARGETS"
+      printf 'BUILDBOX_RUN_ID=%q\n' "$BUILDBOX_RUN_ID"
+      printf 'BUILDBOX_SPEC_HASH=%q\n' "$BUILDBOX_SPEC_HASH"
+      printf 'BUILDBOX_ANDROID_APPLICATION_ID=%q\n' "$BUILDBOX_ANDROID_APPLICATION_ID"
+      printf 'BUILDBOX_APP_DISPLAY_NAME=%q\n' "$BUILDBOX_APP_DISPLAY_NAME"
+      printf 'BUILDBOX_SPEC_JSON="$STATE_DIR/spec.json"\n'
+      printf 'BUILDBOX_TARGETS_JSON="$STATE_DIR/targets.json"\n'
+      printf 'BUILDBOX_DART_DEFINES_JSON="$STATE_DIR/dart-defines.json"\n'
+      printf 'BUILDBOX_SWAN_CONFIG_JSON="$STATE_DIR/swan-config.json"\n'
+    } >"$DEST/spec.env"
+    ;;
+  sign)
+    [[ -f "$STATE_DIR/targets.json" ]] || die 'missing targets.json'
+    cp "$STATE_DIR/targets.json" "$DEST/targets.json"
+    {
+      printf 'BUILDBOX_RUN_ID=%q\n' "$BUILDBOX_RUN_ID"
+      printf 'BUILDBOX_SPEC_HASH=%q\n' "$BUILDBOX_SPEC_HASH"
+      printf 'BUILDBOX_TARGETS=%q\n' "$BUILDBOX_TARGETS"
+      printf 'BUILDBOX_TARGETS_JSON="$STATE_DIR/targets.json"\n'
+    } >"$DEST/spec.env"
+    ;;
+esac
+
+if [[ -e "$DEST/uploads.json" || -e "$DEST/spec-response.json" ]]; then
+  die 'export included forbidden Hawk response files'
+fi
+if grep -F 'BUILDBOX_UPLOADS_JSON' "$DEST/spec.env" >/dev/null; then
+  die 'export spec.env still names upload authorization'
+fi
+if jq -e 'has("uploads") or has("callbackUrl") or (.. | objects | has("url"))' "$DEST/spec.json" >/dev/null 2>/dev/null; then
+  die 'export spec.json still contains upload urls'
+fi

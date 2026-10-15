@@ -12,15 +12,35 @@ fi
 printf '%q ' "$0" "$@" >>"$LOG"
 printf '\n' >>"$LOG"
 
+write_unsigned_zip() {
+  local path=$1
+  local payload=$2
+  local kind=${FLUTTER_OUTPUT_KIND:-unsigned}
+  python3 - "$path" "$payload" "$kind" <<'PY'
+import sys
+import zipfile
+
+path, payload, kind = sys.argv[1:]
+with zipfile.ZipFile(path, "w") as archive:
+    archive.writestr("AndroidManifest.xml", payload)
+    if kind == "debug":
+        archive.writestr("META-INF/ANDROIDD.SF", "debug")
+        archive.writestr("META-INF/ANDROIDD.RSA", "debug")
+    elif kind == "signed":
+        archive.writestr("META-INF/CERT.SF", "signed")
+        archive.writestr("META-INF/CERT.RSA", "signed")
+PY
+}
+
 if [[ "$1" == "build" && "$2" == "apk" ]]; then
   mkdir -p build/app/outputs/flutter-apk
-  printf 'contract apk\n' >build/app/outputs/flutter-apk/app-release.apk
+  write_unsigned_zip build/app/outputs/flutter-apk/app-release.apk 'contract apk'
   exit 0
 fi
 
 if [[ "$1" == "build" && "$2" == "appbundle" ]]; then
   mkdir -p build/app/outputs/bundle/release
-  printf 'contract aab\n' >build/app/outputs/bundle/release/app-release.aab
+  write_unsigned_zip build/app/outputs/bundle/release/app-release.aab 'contract aab'
   exit 0
 fi
 

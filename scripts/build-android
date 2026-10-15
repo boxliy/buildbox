@@ -2,6 +2,12 @@
 set -Eeuo pipefail
 set +x
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/targets.sh
+source "$SCRIPT_DIR/lib/targets.sh"
+# shellcheck source=lib/artifact.sh
+source "$SCRIPT_DIR/lib/artifact.sh"
+
 die() {
   printf 'build-android: %s\n' "$*" >&2
   exit 1
@@ -16,26 +22,27 @@ build_target() {
   local artifact_glob
   local artifact_name
   local artifact_path
-  local artifact_file_name
   local canonical_artifact
   local artifact_sha256
   local artifact_byte_size
 
   case "$target" in
-    android_apk)
+    apk)
       FLUTTER_TARGET=(build apk --release)
-      artifact_glob='build/app/outputs/flutter-apk/app-release.apk'
-      artifact_name='swan-release.apk'
       ;;
-    android_aab)
+    aab)
       FLUTTER_TARGET=(build appbundle --release)
-      artifact_glob='build/app/outputs/bundle/release/app-release.aab'
-      artifact_name='swan-release.aab'
+      ;;
+    ipa)
+      die 'ipa compile is not supported in build-android (phase A)'
       ;;
     *)
       die "unsupported artifact target: $target"
       ;;
   esac
+
+  artifact_glob=$(target_unsigned_glob "$target") || die "unsupported artifact target: $target"
+  artifact_name=$(target_artifact_basename "$target") || die "unsupported artifact target: $target"
 
   (
     cd "$SWAN_DIR"
@@ -47,23 +54,36 @@ build_target() {
 
   artifact_path="$SWAN_DIR/$artifact_glob"
   [[ -f "$artifact_path" ]] || die "expected artifact missing: $artifact_path"
+  if [[ -n "${FLUTTER_LOG:-}" ]]; then
+    grep -F 'SWAN_ARTIFACT_KIND=unsigned_release' "$FLUTTER_LOG" >/dev/null \
+      || die "SWAN_ARTIFACT_KIND must be unsigned_release"
+  fi
+  local signing_state
+  if ! signing_state=$(artifact_signing_state "$artifact_path"); then
+    die "compile output is not a zip: $artifact_path"
+  fi
+  case "$signing_state" in
+    unsigned) ;;
+    debug) die "refusing debug-signed compile output for $target" ;;
+    signed) die "refusing already-signed compile output for $target" ;;
+    *) die "unrecognized compile output for $target: $signing_state" ;;
+  esac
 
-  artifact_sha256=$(sha256sum "$artifact_path" | awk '{print $1}')
-  artifact_byte_size=$(wc -c <"$artifact_path" | tr -d '[:space:]')
-  canonical_artifact="$ARTIFACT_DIR/$artifact_name"
+  canonical_artifact="$UNSIGNED_DIR/$artifact_name"
   cp "$artifact_path" "$canonical_artifact"
-  artifact_file_name=${canonical_artifact##*/}
+  artifact_sha256=$(sha256sum "$canonical_artifact" | awk '{print $1}')
+  artifact_byte_size=$(wc -c <"$canonical_artifact" | tr -d '[:space:]')
 
   jq -n \
     --arg target "$target" \
     --arg path "$canonical_artifact" \
-    --arg fileName "$artifact_file_name" \
+    --arg fileName "$artifact_name" \
     --arg sha256 "sha256:$artifact_sha256" \
     --argjson byteSize "$artifact_byte_size" \
-    '{target: $target, path: $path, fileName: $fileName, sha256: $sha256, byteSize: $byteSize}' \
-    >"$ARTIFACT_DIR/$target.json"
+    '{target: $target, path: $path, fileName: $fileName, sha256: $sha256, byteSize: $byteSize, stage: "unsigned"}' \
+    >"$UNSIGNED_DIR/$target.json"
 
-  printf 'Built %s (%s bytes, sha256 %s)\n' "$canonical_artifact" "$artifact_byte_size" "$artifact_sha256"
+  printf 'Built unsigned %s (%s bytes, sha256 %s)\n' "$canonical_artifact" "$artifact_byte_size" "$artifact_sha256"
 }
 
 STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
@@ -78,15 +98,25 @@ BUILDBOX_SWAN_CONFIG_JSON="$STATE_DIR/swan-config.json"
 
 require_command git
 require_command jq
+require_command python3
 require_command sha256sum
 require_command wc
 
+for forbidden in uploads.json spec-response.json; do
+  if [[ -e "$STATE_DIR/$forbidden" ]]; then
+    die "refusing to compile while $forbidden is present in state"
+  fi
+done
+if jq -e 'has("uploads") or has("callbackUrl")' "$BUILDBOX_SPEC_JSON" >/dev/null; then
+  die 'refusing to compile while spec.json contains upload authorization'
+fi
+
 SOURCE_ROOT=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:-$PWD}/aviary-source}
 SWAN_DIR=${BUILDBOX_SWAN_DIR:-$SOURCE_ROOT/waterfowl/apps/swan}
-ARTIFACT_DIR="$STATE_DIR/artifacts"
-ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
+UNSIGNED_DIR="$STATE_DIR/unsigned"
+UNSIGNED_MANIFEST_JSON="$STATE_DIR/unsigned-manifest.json"
 NATIVE_MANIFEST="$SWAN_DIR/android/app/src/release/AndroidManifest.xml"
-mkdir -p "$ARTIFACT_DIR"
+mkdir -p "$UNSIGNED_DIR"
 
 [[ -d "$SOURCE_ROOT/.git" ]] || die "Aviary source checkout not found at $SOURCE_ROOT"
 [[ -d "$SWAN_DIR" ]] || die "Swan app directory not found at $SWAN_DIR"
@@ -174,7 +204,11 @@ else
 fi
 
 while IFS= read -r target; do
-  build_target "$target"
+  case "$target" in
+    apk | aab) build_target "$target" ;;
+    ipa) die 'ipa compile is not supported in build-android (phase A)' ;;
+    *) die "unsupported artifact target: $target" ;;
+  esac
 done < <(jq -r '.[]' "$BUILDBOX_TARGETS_JSON")
 
-jq -s '.' "$ARTIFACT_DIR"/*.json >"$ARTIFACTS_JSON"
+jq -s '.' "$UNSIGNED_DIR"/*.json >"$UNSIGNED_MANIFEST_JSON"

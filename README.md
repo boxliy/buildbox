@@ -1,7 +1,9 @@
 # buildbox
 
-Buildbox contains the GitHub Actions runner contract for immutable Hawk build
-specs. The first supported target is Swan Android artifacts.
+Buildbox contains the GitHub Actions runner contract for immutable Hawk
+Build Spec v1 attempts. Phase A focuses on Swan Android artifacts (`apk`, `aab`)
+with compile/sign runner separation; `ipa` is accepted in the contract loader
+for forward alignment with Hawk but is not compiled in this repository yet.
 
 ## Android workflow
 
@@ -16,78 +18,69 @@ as workflow input. Runtime authority comes from these repository secrets:
 - `HAWK_BUILDBOX_TOKEN`
 - `AVIARY_SOURCE_TOKEN`: read-only access to the private Aviary repository
 
-The workflow separates trusted prepare/finalize work from compilation onto
-different runners, so code from the selected Aviary commit never shares a
-runner with the long-lived Hawk token. It:
+Jobs run on separate runners:
 
-1. Loads the exact immutable build spec attempt from
-   `GET /api/v1/buildbox/build-specs/{id}?run_id={runId}`.
-2. Checks out `sourceRepo` at `commitSha` into `aviary-source` with a read-only token.
-3. Verifies `HEAD` exactly matches `commitSha` and is reachable from trusted
-   `origin/main`.
-4. Builds each requested target from `waterfowl/apps/swan`, generating a
-   release manifest overlay from the frozen native capability list.
-5. Computes SHA-256 and byte size for each artifact.
-6. Uploads each artifact with its matching presigned `PUT` URL and headers.
-7. Posts a running callback followed by a success or failure callback to
-   `POST /api/v1/buildbox/runs/{runId}/callback`.
+| Job | Hawk token | Role |
+|-----|------------|------|
+| `prepare` | yes | Load spec, verify hash, reject a public repository, then report `running` |
+| `compile` | no | Checkout Aviary at `commitSha`, build `unsigned_release` outputs |
+| `sign` | no | Isolated signing step; fails closed without a real signer |
+| `finalize` | yes | Upload only after sign succeeds; otherwise report `failed` |
+
+The compile job never receives `HAWK_BUILDBOX_TOKEN`, signing material, the
+Hawk response body, or presigned upload URLs. `prepare` exports a compile
+slice (`spec` without `uploads`, targets, dart defines, swan config) and a
+sign slice (run id, spec hash, targets). Unsigned artifacts move to `sign`
+as their own artifact. `build-android` rejects debug-signed and already-signed
+zip outputs. `sign-android` rejects those same states and exits non-zero when
+signing material is absent or when no production signer is implemented.
+Phase A does not copy unsigned bytes forward or report `succeeded`.
+
+## Spec v1 targets and object keys
+
+Canonical Hawk target names are `apk`, `aab`, and `ipa`. `load-build-spec`
+canonicalizes legacy `android_apk` / `android_aab` in API responses when
+present. Object keys use `{artifactPrefix}{target}.{ext}` (for example
+`builds/.../apk.apk`, `builds/.../aab.aab`).
+
+`specHash` is `sha256:` + hex(SHA-256(JCS-sorted compact JSON of `config`)).
+The loader recomputes and rejects mismatches.
 
 ## Hawk response contract
 
-`scripts/load-build-spec` requires the response to expose these fields:
+`scripts/load-build-spec` requires:
 
-- `sourceRepo`: GitHub `owner/repo`, `https://github.com/owner/repo.git`, or
-  `git@github.com:owner/repo.git`
-- `commitSha`: full 40-character commit SHA
-- `targets`: 1-2 unique values from `android_apk` and `android_aab`
-- `runId`
-- `config`: immutable build input object
-- `specHash`: SHA-256 of the canonical JSON `config`; the loader verifies it
-- `uploads`: an array with an entry matching the target
-- `artifactPrefix`: attempt-specific immutable object prefix
-- `uploads[].url`: presigned `PUT` URL
-- `uploads[].contentType`: artifact content type
-- `uploads[].headers`: presigned upload headers as an object
+- `sourceRepo`, `commitSha`, `targets`, `runId`, `config`, `specHash`
+- `artifactPrefix`, `uploads[]` with `target`, `url`, `contentType`, `headers`, `objectKey`
+- `config.androidApplicationId`, `config.appDisplayName`
 
-Optional config fields:
+Optional: `config.dartDefines`, `config.swanConfig`.
 
-- `config.dartDefines` as an object
-- `config.swanConfig` as an object
+Callbacks: `POST /api/v1/buildbox/runs/{runId}/callback` with `status`,
+`githubRunId`, and `artifacts[]` on success.
 
-`dartDefines` entries are passed to every Flutter build as
-`--dart-define=KEY=VALUE`.
-`swanConfig`, when present, is passed as a compact JSON value through
-`--dart-define=SWAN_CONFIG_JSON=...`.
+## OIDC and short-lived credentials (phase B)
 
-The immutable config must include `androidApplicationId` and `appDisplayName`.
-Buildbox exports them only to the Flutter build as
-`SWAN_ANDROID_APPLICATION_ID` and `SWAN_APP_DISPLAY_NAME`; runtime identity,
-Hawk origin, release channel, feature keys, capabilities, and trusted release
-keys are supplied through `config.dartDefines`.
-
-Success callbacks send:
-
-- `status: "succeeded"`
-- `githubRunId`
-- `artifacts[]` with `target`, `fileName`, `contentType`, `byteSize`,
-  `sha256`, and `objectKey`
-
-Before compiling, the workflow sends `status: "running"`, `githubRunId`, and an
-empty `artifacts` array.
-
-Failure callbacks send:
-
-- `status: "failed"`
-- `githubRunId`
-- `artifacts: []`
-- `errorCode: "BUILD_FAILED"`
-- `errorMessage`
+Phase A still uses the shared bearer for prepare/finalize against Hawk.
+GitHub OIDC exchange (`POST /api/v1/buildbox/auth/exchange`), stage-scoped
+tokens, and reusable workflow SHA pinning for prepare/sign/finalize will land
+with Hawk integration in AVIARY-47 phase B.
 
 ## Local contract tests
 
-The tests use fixtures and mock commands only; they do not call Hawk, Flutter, or
-OSS.
+Fixtures and mock `curl` / `flutter` / `git` only:
 
 ```sh
 tests/contract.sh
 ```
+
+## Phase A limitations
+
+- `sign-android` has no production signer. Missing material and a present
+  material directory both fail. That failure is not a signed delivery.
+- Compile and sign artifacts omit presigned URLs. `prepare` rejects a public
+  repository before it reports `running`. That rejection reports `failed` from
+  the prepare job, so Hawk does not stay `running` when `finalize` is skipped.
+  Unsigned outputs are not published as Actions artifacts until a private
+  runner is available.
+- OIDC, reusable workflow SHA pins, and real keystore signing remain phase B.
