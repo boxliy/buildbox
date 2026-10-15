@@ -56,6 +56,10 @@ if ! grep -F 'compile-input-' <<<"$COMPILE_JOB" >/dev/null; then
   exit 1
 fi
 PREPARE_JOB=$(sed -n '/^  prepare:/,/^  compile:/p' "$ROOT/.github/workflows/build.yml")
+if ! grep -F "github.event_name == 'workflow_dispatch'" <<<"$PREPARE_JOB" >/dev/null; then
+  printf 'prepare must skip the push event GitHub sends when the workflow file changes\n' >&2
+  exit 1
+fi
 SIGN_JOB=$(sed -n '/^  sign:/,/^  finalize:/p' "$ROOT/.github/workflows/build.yml")
 FINALIZE_JOB=$(sed -n '/^  finalize:/,$p' "$ROOT/.github/workflows/build.yml")
 if ! grep -F 'public repository cannot carry unsigned build artifacts' <<<"$PREPARE_JOB" >/dev/null; then

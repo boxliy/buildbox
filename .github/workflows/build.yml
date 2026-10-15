@@ -1,5 +1,8 @@
 name: Build Android
 
+# GitHub also delivers a push event when this file changes. Without a push
+# trigger that event becomes a failed run with zero jobs. The prepare guard
+# skips that push, so no product build starts.
 on:
   workflow_dispatch:
     inputs:
@@ -7,12 +10,16 @@ on:
         description: Hawk build spec id (spec_id:run_id)
         required: true
         type: string
+  push:
+    paths:
+      - .github/workflows/build.yml
 
 permissions:
   contents: read
 
 jobs:
   prepare:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
