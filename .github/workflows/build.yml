@@ -11,6 +11,8 @@ on:
         required: true
         type: string
   push:
+    branches:
+      - main
     paths:
       - .github/workflows/build.yml
 

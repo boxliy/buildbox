@@ -60,6 +60,16 @@ if ! grep -F "github.event_name == 'workflow_dispatch'" <<<"$PREPARE_JOB" >/dev/
   printf 'prepare must skip the push event GitHub sends when the workflow file changes\n' >&2
   exit 1
 fi
+TRIGGER=$(awk '/^on:/{flag=1;next}/^permissions:/{flag=0}flag' "$ROOT/.github/workflows/build.yml")
+PUSH_TRIGGER=$(awk '/^  push:/{flag=1;next}/^[^ ]/{flag=0}flag' <<<"$TRIGGER")
+if ! grep -E -q '^[[:space:]]*-[[:space:]]+main$' <<<"$PUSH_TRIGGER"; then
+  printf 'push trigger must be limited to the main branch\n' >&2
+  exit 1
+fi
+if ! grep -F '.github/workflows/build.yml' <<<"$PUSH_TRIGGER" >/dev/null; then
+  printf 'push trigger must keep the workflow path filter\n' >&2
+  exit 1
+fi
 SIGN_JOB=$(sed -n '/^  sign:/,/^  finalize:/p' "$ROOT/.github/workflows/build.yml")
 FINALIZE_JOB=$(sed -n '/^  finalize:/,$p' "$ROOT/.github/workflows/build.yml")
 if ! grep -F 'public repository cannot carry unsigned build artifacts' <<<"$PREPARE_JOB" >/dev/null; then
