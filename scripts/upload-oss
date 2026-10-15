@@ -11,6 +11,10 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/targets.sh
+source "$SCRIPT_DIR/lib/targets.sh"
+
 STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
 SPEC_ENV="$STATE_DIR/spec.env"
 [[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
@@ -28,17 +32,8 @@ VERIFIED_DIR="$STATE_DIR/verified-artifacts"
 mkdir -p "$VERIFIED_DIR"
 
 while IFS= read -r target; do
-  case "$target" in
-    android_apk)
-      artifact_path="$STATE_DIR/artifacts/swan-release.apk"
-      artifact_file_name=swan-release.apk
-      ;;
-    android_aab)
-      artifact_path="$STATE_DIR/artifacts/swan-release.aab"
-      artifact_file_name=swan-release.aab
-      ;;
-    *) die "unsupported artifact target: $target" ;;
-  esac
+  artifact_file_name=$(target_artifact_basename "$target") || die "unsupported artifact target: $target"
+  artifact_path="$STATE_DIR/artifacts/$artifact_file_name"
   upload_url=$(jq -er --arg target "$target" '.[] | select(.target == $target) | .url' "$BUILDBOX_UPLOADS_JSON") || die "missing upload url for target: $target"
   [[ -f "$artifact_path" ]] || die "artifact not found: $artifact_path"
 

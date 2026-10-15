@@ -39,9 +39,12 @@ assert_file_not_contains() {
   fi
 }
 
-BUILD_JOB=$(sed -n '/^  build:/,/^  finalize:/p' "$ROOT/.github/workflows/build.yml")
-if grep -F 'HAWK_BUILDBOX_TOKEN' <<<"$BUILD_JOB" >/dev/null; then
-  printf 'build job must not receive the Hawk service token\n' >&2
+COMPILE_JOB=$(sed -n '/^  compile:/,/^  sign:/p' "$ROOT/.github/workflows/build.yml")
+if [[ -z "$COMPILE_JOB" ]]; then
+  COMPILE_JOB=$(sed -n '/^  build:/,/^  finalize:/p' "$ROOT/.github/workflows/build.yml")
+fi
+if grep -F 'HAWK_BUILDBOX_TOKEN' <<<"$COMPILE_JOB" >/dev/null; then
+  printf 'compile job must not receive the Hawk service token\n' >&2
   exit 1
 fi
 
@@ -49,17 +52,18 @@ export MOCK_GIT_HEAD='1111111111111111111111111111111111111111'
 "$ROOT/scripts/load-build-spec" 101:401
 "$ROOT/scripts/report-result" running
 "$ROOT/scripts/build-android"
+"$ROOT/scripts/sign-android"
 "$ROOT/scripts/upload-oss"
 "$ROOT/scripts/report-result" succeeded
 
 source "$BUILDBOX_STATE_DIR/spec.env"
 
-[[ "$BUILDBOX_TARGETS" == "android_apk,android_aab" ]]
+[[ "$BUILDBOX_TARGETS" == "apk,aab" ]]
 [[ "$BUILDBOX_CHECKOUT_REPOSITORY" == "boxliy/aviary" ]]
 [[ "$(jq 'length' "$BUILDBOX_STATE_DIR/artifacts.json")" == "2" ]]
 assert_file_contains "$GITHUB_OUTPUT" "checkout_repository=boxliy/aviary"
 assert_file_contains "$GITHUB_OUTPUT" "commit_sha=1111111111111111111111111111111111111111"
-assert_file_contains "$GITHUB_OUTPUT" "targets=android_apk,android_aab"
+assert_file_contains "$GITHUB_OUTPUT" "targets=apk,aab"
 [[ "$(cat "$GITHUB_ENV")" == "UNCHANGED=1" ]]
 assert_file_contains "$FLUTTER_LOG" "build apk --release"
 assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
@@ -85,8 +89,8 @@ jq -e '
   .githubRunId == 987654321 and
   (.artifacts | length) == 2 and
   ((keys | sort) == ["artifacts", "githubRunId", "status"]) and
-  (any(.artifacts[]; .target == "android_apk" and .fileName == "swan-release.apk" and .contentType == "application/vnd.android.package-archive" and .objectKey == "builds/spec-apk-1/build-apk-1/android_apk.apk" and .byteSize == 13 and (.sha256 | test("^sha256:[0-9a-f]{64}$")))) and
-  (any(.artifacts[]; .target == "android_aab" and .fileName == "swan-release.aab" and .contentType == "application/octet-stream" and .objectKey == "builds/spec-apk-1/build-apk-1/android_aab.aab" and .byteSize == 13 and (.sha256 | test("^sha256:[0-9a-f]{64}$"))))
+  (any(.artifacts[]; .target == "apk" and .fileName == "swan-release.apk" and .contentType == "application/vnd.android.package-archive" and .objectKey == "builds/spec-apk-1/build-apk-1/apk.apk" and .byteSize == 13 and (.sha256 | test("^sha256:[0-9a-f]{64}$")))) and
+  (any(.artifacts[]; .target == "aab" and .fileName == "swan-release.aab" and .contentType == "application/octet-stream" and .objectKey == "builds/spec-apk-1/build-apk-1/aab.aab" and .byteSize == 13 and (.sha256 | test("^sha256:[0-9a-f]{64}$"))))
 ' "$BUILDBOX_STATE_DIR/callback-succeeded.json" >/dev/null
 
 CURL_LOG="$TMP_DIR/curl-aab.log"
@@ -99,6 +103,7 @@ mkdir -p "$BUILDBOX_STATE_DIR"
 export MOCK_GIT_HEAD='2222222222222222222222222222222222222222'
 "$ROOT/scripts/load-build-spec" 102:402
 "$ROOT/scripts/build-android"
+"$ROOT/scripts/sign-android"
 printf '%s' 'after-build-change' >>"$BUILDBOX_STATE_DIR/artifacts/swan-release.aab"
 "$ROOT/scripts/upload-oss"
 "$ROOT/scripts/report-result" succeeded
