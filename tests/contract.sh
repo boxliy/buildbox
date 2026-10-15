@@ -56,16 +56,35 @@ if ! grep -F 'compile-input-' <<<"$COMPILE_JOB" >/dev/null; then
   exit 1
 fi
 PREPARE_JOB=$(sed -n '/^  prepare:/,/^  compile:/p' "$ROOT/.github/workflows/build.yml")
+SIGN_JOB=$(sed -n '/^  sign:/,/^  finalize:/p' "$ROOT/.github/workflows/build.yml")
+FINALIZE_JOB=$(sed -n '/^  finalize:/,$p' "$ROOT/.github/workflows/build.yml")
 if ! grep -F 'public repository cannot carry unsigned build artifacts' <<<"$PREPARE_JOB" >/dev/null; then
   printf 'prepare must fail closed on a public repository\n' >&2
   exit 1
 fi
-SIGN_JOB=$(sed -n '/^  sign:/,/^  finalize:/p' "$ROOT/.github/workflows/build.yml")
+prepare_public=$(grep -n -F 'public repository cannot carry unsigned build artifacts' <<<"$PREPARE_JOB" | head -n 1 | cut -d: -f1)
+prepare_running=$(grep -n -F 'scripts/report-result running' <<<"$PREPARE_JOB" | head -n 1 | cut -d: -f1)
+prepare_failed=$(grep -n -F 'scripts/report-result failed' <<<"$PREPARE_JOB" | head -n 1 | cut -d: -f1)
+if [[ -z "$prepare_public" || -z "$prepare_running" || -z "$prepare_failed" ]]; then
+  printf 'prepare must reject a public repository, report running, and report failed\n' >&2
+  exit 1
+fi
+if [[ "$prepare_public" -ge "$prepare_running" || "$prepare_running" -ge "$prepare_failed" ]]; then
+  printf 'prepare must reject a public repository before reporting running, and report failed only after that\n' >&2
+  exit 1
+fi
+if ! grep -F 'if: failure()' <<<"$PREPARE_JOB" >/dev/null; then
+  printf 'prepare must report failed when an earlier prepare step fails\n' >&2
+  exit 1
+fi
+if ! grep -F "needs.prepare.result == 'success'" <<<"$FINALIZE_JOB" >/dev/null; then
+  printf 'finalize must stay gated on prepare success so it does not send a second callback\n' >&2
+  exit 1
+fi
 if grep -F 'build-input-' <<<"$SIGN_JOB" >/dev/null; then
   printf 'sign job must not download the full prepare artifact\n' >&2
   exit 1
 fi
-FINALIZE_JOB=$(sed -n '/^  finalize:/,$p' "$ROOT/.github/workflows/build.yml")
 if ! grep -F 'needs.sign.result == '"'"'success'"'" <<<"$FINALIZE_JOB" >/dev/null; then
   printf 'finalize success path must require the sign job\n' >&2
   exit 1
@@ -248,5 +267,27 @@ if "$ROOT/scripts/load-build-spec" 103:403 2>"$TMP_DIR/tampered.err"; then
   exit 1
 fi
 assert_file_contains "$TMP_DIR/tampered.err" "specHash does not match config"
+
+# Public rejection reports failed and never writes a running callback.
+CURL_LOG="$TMP_DIR/curl-public.log"
+BUILDBOX_STATE_DIR="$TMP_DIR/state-public"
+GITHUB_OUTPUT="$TMP_DIR/github-output-public.log"
+export CURL_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
+mkdir -p "$BUILDBOX_STATE_DIR"
+export MOCK_GIT_HEAD='1111111111111111111111111111111111111111'
+"$ROOT/scripts/load-build-spec" 101:401
+printf '%s\n' 'public repository cannot carry unsigned build artifacts' >"$BUILDBOX_STATE_DIR/prepare-failure.txt"
+"$ROOT/scripts/report-result" failed "$(head -n 1 "$BUILDBOX_STATE_DIR/prepare-failure.txt")"
+if [[ -e "$BUILDBOX_STATE_DIR/callback-running.json" ]]; then
+  printf 'public rejection must not report running\n' >&2
+  exit 1
+fi
+jq -e '
+  .status == "failed" and
+  .githubRunId == 987654321 and
+  .artifacts == [] and
+  .errorCode == "BUILD_FAILED" and
+  .errorMessage == "public repository cannot carry unsigned build artifacts"
+' "$BUILDBOX_STATE_DIR/callback-failed.json" >/dev/null
 
 printf 'contract tests passed\n'

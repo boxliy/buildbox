@@ -22,7 +22,7 @@ Jobs run on separate runners:
 
 | Job | Hawk token | Role |
 |-----|------------|------|
-| `prepare` | yes | Load spec, verify hash, report `running` |
+| `prepare` | yes | Load spec, verify hash, reject a public repository, then report `running` |
 | `compile` | no | Checkout Aviary at `commitSha`, build `unsigned_release` outputs |
 | `sign` | no | Isolated signing step; fails closed without a real signer |
 | `finalize` | yes | Upload only after sign succeeds; otherwise report `failed` |
@@ -78,7 +78,9 @@ tests/contract.sh
 
 - `sign-android` has no production signer. Missing material and a present
   material directory both fail. That failure is not a signed delivery.
-- Compile and sign artifacts omit presigned URLs. `prepare` fails when the
-  repository is public, so unsigned outputs are not published as Actions
-  artifacts until a private runner is available.
+- Compile and sign artifacts omit presigned URLs. `prepare` rejects a public
+  repository before it reports `running`. That rejection reports `failed` from
+  the prepare job, so Hawk does not stay `running` when `finalize` is skipped.
+  Unsigned outputs are not published as Actions artifacts until a private
+  runner is available.
 - OIDC, reusable workflow SHA pins, and real keystore signing remain phase B.

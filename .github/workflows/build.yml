@@ -33,16 +33,12 @@ jobs:
           HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
         run: scripts/load-build-spec "$BUILDBOX_DISPATCH_ID"
 
-      - name: Report running
-        env:
-          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
-        run: scripts/report-result running
-
       - name: Refuse public artifact transport
         shell: bash
         run: |
           if [[ "${{ github.event.repository.private }}" != "true" ]]; then
+            mkdir -p "$BUILDBOX_STATE_DIR"
+            printf '%s\n' 'public repository cannot carry unsigned build artifacts' >"$BUILDBOX_STATE_DIR/prepare-failure.txt"
             printf 'public repository cannot carry unsigned build artifacts\n' >&2
             exit 1
           fi
@@ -70,6 +66,26 @@ jobs:
           include-hidden-files: true
           retention-days: 1
           if-no-files-found: error
+
+      - name: Report running
+        if: success()
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
+        run: scripts/report-result running
+
+      - name: Report prepare failure
+        if: failure()
+        shell: bash
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
+        run: |
+          reason='Buildbox prepare failed'
+          if [[ -f "$BUILDBOX_STATE_DIR/prepare-failure.txt" ]]; then
+            reason=$(head -n 1 "$BUILDBOX_STATE_DIR/prepare-failure.txt")
+          fi
+          scripts/report-result failed "$reason"
 
   compile:
     needs: prepare
