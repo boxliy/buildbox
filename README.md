@@ -24,11 +24,17 @@ Jobs run on separate runners:
 |-----|------------|------|
 | `prepare` | yes | Load spec, verify hash, report `running` |
 | `compile` | no | Checkout Aviary at `commitSha`, build `unsigned_release` outputs |
-| `sign` | no | Isolated signing step (`sign-android`; production keys wired in phase B) |
-| `finalize` | yes | Refresh upload URLs, upload to OSS, report `succeeded` / `failed` |
+| `sign` | no | Isolated signing step; fails closed without a real signer |
+| `finalize` | yes | Upload only after sign succeeds; otherwise report `failed` |
 
-The compile job never receives `HAWK_BUILDBOX_TOKEN` or signing material.
-Unsigned artifacts are passed to `sign` via workflow artifacts only.
+The compile job never receives `HAWK_BUILDBOX_TOKEN`, signing material, the
+Hawk response body, or presigned upload URLs. `prepare` exports a compile
+slice (`spec` without `uploads`, targets, dart defines, swan config) and a
+sign slice (run id, spec hash, targets). Unsigned artifacts move to `sign`
+as their own artifact. `build-android` rejects debug-signed and already-signed
+zip outputs. `sign-android` rejects those same states and exits non-zero when
+signing material is absent or when no production signer is implemented.
+Phase A does not copy unsigned bytes forward or report `succeeded`.
 
 ## Spec v1 targets and object keys
 
@@ -70,7 +76,9 @@ tests/contract.sh
 
 ## Phase A limitations
 
-- `sign-android` uses a stub when signing secrets are not configured; this is not
-  production signing.
-- Public repo workflow artifacts may expose unsigned builds; treat as a known
-  visibility constraint until private runners or OIDC-scoped fetch is available.
+- `sign-android` has no production signer. Missing material and a present
+  material directory both fail. That failure is not a signed delivery.
+- Compile and sign artifacts omit presigned URLs. `prepare` fails when the
+  repository is public, so unsigned outputs are not published as Actions
+  artifacts until a private runner is available.
+- OIDC, reusable workflow SHA pins, and real keystore signing remain phase B.

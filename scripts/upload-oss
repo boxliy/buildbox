@@ -21,7 +21,15 @@ SPEC_ENV="$STATE_DIR/spec.env"
 # shellcheck disable=SC1090
 source "$SPEC_ENV"
 BUILDBOX_ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
+SIGN_PROOF_JSON="$STATE_DIR/sign-proof.json"
 [[ -f "$BUILDBOX_ARTIFACTS_JSON" ]] || die "missing artifact metadata: $BUILDBOX_ARTIFACTS_JSON"
+[[ -f "$SIGN_PROOF_JSON" ]] || die "missing sign proof: $SIGN_PROOF_JSON"
+SIGNER=$(jq -er '.signer | select(type == "string" and length > 0)' "$SIGN_PROOF_JSON") || die 'sign proof has no signer'
+case "$SIGNER" in
+  *stub* | *unimplemented*) die "refusing to upload unsigned signer: $SIGNER" ;;
+esac
+jq -e 'all(.[]; .signMode == "signed")' "$BUILDBOX_ARTIFACTS_JSON" >/dev/null \
+  || die 'refusing to upload artifacts that are not signMode=signed'
 
 require_command curl
 require_command jq

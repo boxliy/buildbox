@@ -5,6 +5,8 @@ set +x
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/targets.sh
 source "$SCRIPT_DIR/lib/targets.sh"
+# shellcheck source=lib/artifact.sh
+source "$SCRIPT_DIR/lib/artifact.sh"
 
 die() {
   printf 'sign-android: %s\n' "$*" >&2
@@ -20,30 +22,33 @@ SPEC_ENV="$STATE_DIR/spec.env"
 [[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
 # shellcheck disable=SC1090
 source "$SPEC_ENV"
-BUILDBOX_TARGETS_JSON="$STATE_DIR/targets.json"
+BUILDBOX_TARGETS_JSON=${BUILDBOX_TARGETS_JSON:-$STATE_DIR/targets.json}
 [[ -f "$BUILDBOX_TARGETS_JSON" ]] || die "missing targets json: $BUILDBOX_TARGETS_JSON"
 
 require_command jq
-require_command sha256sum
-require_command wc
-require_command cp
+require_command python3
+
+# Compile and sign runners must not receive upload authorization or the raw Hawk body.
+for forbidden in uploads.json spec-response.json; do
+  if [[ -e "$STATE_DIR/$forbidden" ]]; then
+    die "refusing to sign while $forbidden is present in state"
+  fi
+done
+
+if [[ -f "$STATE_DIR/spec.json" ]] && jq -e 'has("uploads") or (.. | objects | has("url"))' "$STATE_DIR/spec.json" >/dev/null; then
+  die 'refusing to sign while spec.json contains upload urls'
+fi
 
 UNSIGNED_DIR="$STATE_DIR/unsigned"
-ARTIFACT_DIR="$STATE_DIR/artifacts"
-SIGN_PROOF_JSON="$STATE_DIR/sign-proof.json"
-mkdir -p "$ARTIFACT_DIR"
 
 sign_one() {
   local target=$1
   local basename
   local unsigned_path
-  local signed_path
-  local artifact_sha256
-  local artifact_byte_size
+  local state
 
   basename=$(target_artifact_basename "$target") || die "unsupported sign target: $target"
   unsigned_path="$UNSIGNED_DIR/$basename"
-  signed_path="$ARTIFACT_DIR/$basename"
   [[ -f "$unsigned_path" ]] || die "unsigned artifact not found: $unsigned_path"
 
   case "$target" in
@@ -51,43 +56,24 @@ sign_one() {
     *) die "sign-android only supports apk and aab in phase A (got: $target)" ;;
   esac
 
-  if [[ -n "${BUILDBOX_SIGNING_MATERIAL_DIR:-}" ]]; then
-    die 'production signing material is not configured in phase A contract tests'
+  if ! state=$(artifact_signing_state "$unsigned_path"); then
+    die "artifact is not a zip: $unsigned_path"
   fi
+  case "$state" in
+    unsigned) ;;
+    debug) die "refusing debug-signed artifact for $target" ;;
+    signed) die "refusing already-signed artifact for $target" ;;
+    *) die "unrecognized signing state for $target: $state" ;;
+  esac
 
-  cp "$unsigned_path" "$signed_path"
-
-  artifact_sha256=$(sha256sum "$signed_path" | awk '{print $1}')
-  artifact_byte_size=$(wc -c <"$signed_path" | tr -d '[:space:]')
-
-  jq -n \
-    --arg target "$target" \
-    --arg path "$signed_path" \
-    --arg fileName "$basename" \
-    --arg sha256 "sha256:$artifact_sha256" \
-    --argjson byteSize "$artifact_byte_size" \
-    --arg mode "unsigned_release_stub" \
-    '{target: $target, path: $path, fileName: $fileName, sha256: $sha256, byteSize: $byteSize, signMode: $mode}' \
-    >"$ARTIFACT_DIR/$target.json"
-
-  printf 'Signed (stub) %s (%s bytes)\n' "$signed_path" "$artifact_byte_size"
+  # No production signer ships in phase A. Missing or present material both
+  # fail closed: never copy unsigned bytes forward and never exit 0.
+  if [[ -z "${BUILDBOX_SIGNING_MATERIAL_DIR:-}" || ! -d "${BUILDBOX_SIGNING_MATERIAL_DIR}" ]]; then
+    die "signing material is not configured; refusing unsigned $target"
+  fi
+  die "production signing is not implemented in phase A; refusing to report $target signed"
 }
 
 while IFS= read -r target; do
   sign_one "$target"
 done < <(jq -r '.[]' "$BUILDBOX_TARGETS_JSON")
-
-jq -s '.' "$ARTIFACT_DIR"/*.json >"$STATE_DIR/artifacts.json"
-
-jq -n \
-  --arg runId "$BUILDBOX_RUN_ID" \
-  --arg specHash "$BUILDBOX_SPEC_HASH" \
-  --argjson targets "$(cat "$BUILDBOX_TARGETS_JSON")" \
-  --slurpfile artifacts "$STATE_DIR/artifacts.json" \
-  '{
-    runId: $runId,
-    specHash: $specHash,
-    targets: $targets,
-    artifacts: $artifacts[0],
-    signer: "buildbox-sign-android-stub-v1"
-  }' >"$SIGN_PROOF_JSON"

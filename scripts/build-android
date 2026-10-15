@@ -5,6 +5,8 @@ set +x
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/targets.sh
 source "$SCRIPT_DIR/lib/targets.sh"
+# shellcheck source=lib/artifact.sh
+source "$SCRIPT_DIR/lib/artifact.sh"
 
 die() {
   printf 'build-android: %s\n' "$*" >&2
@@ -52,6 +54,20 @@ build_target() {
 
   artifact_path="$SWAN_DIR/$artifact_glob"
   [[ -f "$artifact_path" ]] || die "expected artifact missing: $artifact_path"
+  if [[ -n "${FLUTTER_LOG:-}" ]]; then
+    grep -F 'SWAN_ARTIFACT_KIND=unsigned_release' "$FLUTTER_LOG" >/dev/null \
+      || die "SWAN_ARTIFACT_KIND must be unsigned_release"
+  fi
+  local signing_state
+  if ! signing_state=$(artifact_signing_state "$artifact_path"); then
+    die "compile output is not a zip: $artifact_path"
+  fi
+  case "$signing_state" in
+    unsigned) ;;
+    debug) die "refusing debug-signed compile output for $target" ;;
+    signed) die "refusing already-signed compile output for $target" ;;
+    *) die "unrecognized compile output for $target: $signing_state" ;;
+  esac
 
   canonical_artifact="$UNSIGNED_DIR/$artifact_name"
   cp "$artifact_path" "$canonical_artifact"
@@ -82,8 +98,18 @@ BUILDBOX_SWAN_CONFIG_JSON="$STATE_DIR/swan-config.json"
 
 require_command git
 require_command jq
+require_command python3
 require_command sha256sum
 require_command wc
+
+for forbidden in uploads.json spec-response.json; do
+  if [[ -e "$STATE_DIR/$forbidden" ]]; then
+    die "refusing to compile while $forbidden is present in state"
+  fi
+done
+if jq -e 'has("uploads") or has("callbackUrl")' "$BUILDBOX_SPEC_JSON" >/dev/null; then
+  die 'refusing to compile while spec.json contains upload authorization'
+fi
 
 SOURCE_ROOT=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:-$PWD}/aviary-source}
 SWAN_DIR=${BUILDBOX_SWAN_DIR:-$SOURCE_ROOT/waterfowl/apps/swan}
