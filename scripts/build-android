@@ -2,6 +2,11 @@
 set -Eeuo pipefail
 set +x
 
+[[ ! -v HAWK_STAGE_TOKEN && ! -v ACTIONS_ID_TOKEN_REQUEST_TOKEN ]] || {
+  printf 'build-android: compile runner must not carry stage credentials\n' >&2
+  exit 1
+}
+
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/targets.sh
 source "$SCRIPT_DIR/lib/targets.sh"
@@ -49,7 +54,7 @@ build_target() {
     SWAN_ANDROID_APPLICATION_ID="$BUILDBOX_ANDROID_APPLICATION_ID" \
       SWAN_APP_DISPLAY_NAME="$BUILDBOX_APP_DISPLAY_NAME" \
       SWAN_ARTIFACT_KIND=unsigned_release \
-      "${FLUTTER_CMD[@]}" "${FLUTTER_TARGET[@]}" "${DEFINE_ARGS[@]}"
+      "${FLUTTER_CMD[@]}" "${FLUTTER_TARGET[@]}" --no-pub --build-name="$VERSION_NAME" --build-number="$BUILD_NUMBER" "${DEFINE_ARGS[@]}"
   )
 
   artifact_path="$SWAN_DIR/$artifact_glob"
@@ -183,6 +188,10 @@ ACTUAL_SHA=$(git -C "$SOURCE_ROOT" rev-parse HEAD)
 if [[ "$ACTUAL_SHA" != "$BUILDBOX_COMMIT_SHA" ]]; then
   die "checked out HEAD $ACTUAL_SHA does not match spec commit $BUILDBOX_COMMIT_SHA"
 fi
+
+"$SCRIPT_DIR/verify-compile-inputs"
+VERSION_NAME=$(jq -er '.config.frozenInputs.versionName' "$BUILDBOX_SPEC_JSON")
+BUILD_NUMBER=$(jq -er '.config.frozenInputs.buildNumber' "$BUILDBOX_SPEC_JSON")
 
 DEFINE_ARGS=()
 while IFS= read -r encoded; do

@@ -4,6 +4,7 @@ set +x
 
 usage() {
   printf 'usage: %s <running|succeeded|failed> [message]\n' "${0##*/}" >&2
+  printf 'HAWK_CALLBACK_STAGE must be finalize\n' >&2
 }
 
 die() {
@@ -25,7 +26,9 @@ case "$STATUS" in
 esac
 
 [[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
-[[ -n "${HAWK_BUILDBOX_TOKEN:-}" ]] || die 'HAWK_BUILDBOX_TOKEN is required'
+[[ -n "${HAWK_STAGE_TOKEN:-}" ]] || die 'HAWK_STAGE_TOKEN is required'
+# Hawk records a GitHub callback only for a finalize stage credential.
+[[ "${HAWK_CALLBACK_STAGE:-}" == "finalize" ]] || die 'callback requires a finalize stage credential'
 [[ -n "${BUILDBOX_GITHUB_RUN_ID:-}" ]] || die 'BUILDBOX_GITHUB_RUN_ID is required'
 [[ "$BUILDBOX_GITHUB_RUN_ID" =~ ^[0-9]+$ ]] || die 'BUILDBOX_GITHUB_RUN_ID must be an integer'
 
@@ -33,10 +36,16 @@ require_command curl
 require_command jq
 
 STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
+mkdir -p "$STATE_DIR"
 SPEC_ENV="$STATE_DIR/spec.env"
-[[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
-# shellcheck disable=SC1090
-source "$SPEC_ENV"
+# Failure and cancellation callbacks run before any job artifact exists.
+# A missing spec env is valid for those statuses when the platform run id is already set.
+if [[ -f "$SPEC_ENV" ]]; then
+  # shellcheck disable=SC1090
+  source "$SPEC_ENV"
+fi
+[[ -n "${BUILDBOX_RUN_ID:-}" ]] || die 'BUILDBOX_RUN_ID is required'
+[[ "$BUILDBOX_RUN_ID" =~ ^[0-9]+$ ]] || die 'BUILDBOX_RUN_ID must be a platform run id'
 
 BUILDBOX_ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
 
@@ -45,12 +54,14 @@ BASE_URL=${HAWK_BASE_URL%/}
 CALLBACK_URL="$BASE_URL/api/v1/buildbox/runs/$BUILDBOX_RUN_ID/callback"
 
 if [[ "$STATUS" == "succeeded" ]]; then
+  [[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
+  [[ -n "${BUILDBOX_ARTIFACT_PREFIX:-}" ]] || die 'BUILDBOX_ARTIFACT_PREFIX is required'
   [[ -n "${BUILDBOX_ARTIFACTS_JSON:-}" ]] || die 'missing artifacts metadata for success callback'
   jq -n \
     --arg status "$STATUS" \
     --argjson githubRunId "$BUILDBOX_GITHUB_RUN_ID" \
     --slurpfile artifacts "$BUILDBOX_ARTIFACTS_JSON" \
-    --slurpfile uploads "$BUILDBOX_UPLOADS_JSON" \
+    --arg prefix "$BUILDBOX_ARTIFACT_PREFIX" \
     '{
       status: $status,
       githubRunId: $githubRunId,
@@ -58,14 +69,22 @@ if [[ "$STATUS" == "succeeded" ]]; then
         $artifacts[0] |
         map(
           . as $artifact |
-          ($uploads[0][] | select(.target == $artifact.target)) as $upload |
           {
             target: $artifact.target,
             fileName: $artifact.fileName,
-            contentType: $upload.contentType,
+            contentType: (
+              if $artifact.target == "apk" then "application/vnd.android.package-archive"
+              else "application/octet-stream"
+              end
+            ),
             byteSize: $artifact.byteSize,
             sha256: $artifact.sha256,
-            objectKey: $upload.objectKey,
+            objectKey: ($prefix + $artifact.target + "." + (
+              if $artifact.target == "apk" then "apk"
+              elif $artifact.target == "aab" then "aab"
+              else "ipa"
+              end
+            ))
           }
         )
       )
@@ -91,7 +110,7 @@ fi
 
 curl --fail --silent --show-error \
   --request POST \
-  --header "Authorization: Bearer $HAWK_BUILDBOX_TOKEN" \
+  --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
   --header 'Content-Type: application/json' \
   --data-binary "@$PAYLOAD" \
   "$CALLBACK_URL"

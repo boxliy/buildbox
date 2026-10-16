@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 LOG=${CURL_LOG:?CURL_LOG is required}
+FIXTURE_DIR=${FIXTURE_DIR:?FIXTURE_DIR is required}
 log_args=("$0")
 args=("$@")
 index=0
@@ -9,6 +10,9 @@ while [[ $index -lt ${#args[@]} ]]; do
   arg=${args[$index]}
   if [[ "$arg" == "--header" && $((index + 1)) -lt ${#args[@]} && "${args[$((index + 1))]}" == Authorization:* ]]; then
     log_args+=("--header" "Authorization: REDACTED")
+    index=$((index + 2))
+  elif [[ "$arg" == "--data-binary" && $((index + 1)) -lt ${#args[@]} ]]; then
+    log_args+=("--data-binary" "REDACTED")
     index=$((index + 2))
   else
     log_args+=("$arg")
@@ -21,6 +25,8 @@ printf '\n' >>"$LOG"
 output=
 method=GET
 url=
+data=
+authorization=
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output)
@@ -35,9 +41,16 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --data-binary)
+      data=$2
+      if [[ "$data" == @* ]]; then
+        data=$(cat "${data#@}")
+      fi
       shift 2
       ;;
     --header)
+      if [[ "$2" == Authorization:* ]]; then
+        authorization=${2#Authorization: }
+      fi
       shift 2
       ;;
     --fail | --silent | --show-error)
@@ -50,8 +63,33 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+write_body() {
+  if [[ -n "$output" ]]; then
+    printf '%s\n' "$1" >"$output"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
 case "$method:$url" in
-  GET:*'/api/v1/buildbox/build-specs/101?run_id=401')
+  GET:*'&audience='*)
+    write_body '{"value":"mock-oidc-token"}'
+    ;;
+  POST:*'/api/v1/buildbox/auth/exchange')
+    stage=$(printf '%s' "$data" | jq -er '.stage')
+    # Hawk Id accepts only a decimal string. A JSON number is the rejected client.
+    run_id=$(printf '%s' "$data" | jq -er '.runId | select(type == "string" and test("^[0-9]+$"))')
+    oidc=$(printf '%s' "$data" | jq -er '.oidcToken')
+    [[ "$oidc" == "mock-oidc-token" ]] || exit 1
+    case "$stage" in
+      prepare) token=stage-prepare-token ;;
+      finalize) token=stage-finalize-token ;;
+      *) exit 1 ;;
+    esac
+    write_body "$(jq -nc --arg token "$token" --arg stage "$stage" --arg runId "$run_id" \
+      '{token:$token,tokenType:"Bearer",expiresIn:300,stage:$stage,runId:$runId}')"
+    ;;
+  GET:*'/api/v1/buildbox/build-specs/101?run_id=401' | GET:*'/api/v1/buildbox/runs/401/spec')
     cp "$FIXTURE_DIR/build-spec-apk.json" "$output"
     ;;
   GET:*'/api/v1/buildbox/build-specs/102?run_id=402')
@@ -61,9 +99,39 @@ case "$method:$url" in
     jq '.id = "103" | .runId = "403" | .specHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
       "$FIXTURE_DIR/build-spec-apk.json" >"$output"
     ;;
+  POST:*'/api/v1/buildbox/runs/'*'/artifact-uploads')
+    target=$(printf '%s' "$data" | jq -er '.target')
+    file_name=$(printf '%s' "$data" | jq -er '.fileName')
+    prefix=${MOCK_ARTIFACT_PREFIX:-builds/spec-apk-1/build-apk-1/}
+    case "$target" in
+      apk)
+        content_type='application/vnd.android.package-archive'
+        object_key="${prefix}apk.apk"
+        ;;
+      aab)
+        content_type='application/octet-stream'
+        object_key="${prefix}aab.aab"
+        ;;
+      *) exit 1 ;;
+    esac
+    write_body "$(jq -nc \
+      --arg target "$target" \
+      --arg objectKey "$object_key" \
+      --arg contentType "$content_type" \
+      --arg url "https://oss.example/upload.${target}" \
+      --arg fileName "$file_name" \
+      '{target:$target,objectKey:$objectKey,contentType:$contentType,url:$url,headers:{"Content-Type":$contentType,"x-oss-meta-file":$fileName}}')"
+    ;;
   PUT:https://oss.example/*)
+    [[ "${MOCK_UPLOAD_FAIL:-0}" != 1 ]] || exit 22
     ;;
   POST:*'/api/v1/buildbox/runs/'*'/callback')
+    # Hawk records GitHub callbacks only for a finalize stage credential.
+    [[ "$authorization" == "Bearer stage-finalize-"* || "$authorization" == "Bearer bb1."* ]] || exit 1
+    printf '%s' "$data" | jq -e '.githubRunId | type == "number" and . > 0' >/dev/null
+    if [[ -n "${MOCK_CALLBACK_LOG:-}" ]]; then
+      printf '%s\n' "$data" | jq -c . >>"$MOCK_CALLBACK_LOG"
+    fi
     ;;
   *)
     printf 'unexpected curl call: %s %s\n' "$method" "$url" >&2

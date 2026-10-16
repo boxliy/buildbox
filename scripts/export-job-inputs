@@ -51,6 +51,7 @@ case "$STAGE" in
       printf 'BUILDBOX_TARGETS=%q\n' "$BUILDBOX_TARGETS"
       printf 'BUILDBOX_RUN_ID=%q\n' "$BUILDBOX_RUN_ID"
       printf 'BUILDBOX_SPEC_HASH=%q\n' "$BUILDBOX_SPEC_HASH"
+      printf 'BUILDBOX_ARTIFACT_PREFIX=%q\n' "$BUILDBOX_ARTIFACT_PREFIX"
       printf 'BUILDBOX_ANDROID_APPLICATION_ID=%q\n' "$BUILDBOX_ANDROID_APPLICATION_ID"
       printf 'BUILDBOX_APP_DISPLAY_NAME=%q\n' "$BUILDBOX_APP_DISPLAY_NAME"
       printf 'BUILDBOX_SPEC_JSON="$STATE_DIR/spec.json"\n'
@@ -65,6 +66,7 @@ case "$STAGE" in
     {
       printf 'BUILDBOX_RUN_ID=%q\n' "$BUILDBOX_RUN_ID"
       printf 'BUILDBOX_SPEC_HASH=%q\n' "$BUILDBOX_SPEC_HASH"
+      printf 'BUILDBOX_ARTIFACT_PREFIX=%q\n' "$BUILDBOX_ARTIFACT_PREFIX"
       printf 'BUILDBOX_TARGETS=%q\n' "$BUILDBOX_TARGETS"
       printf 'BUILDBOX_TARGETS_JSON="$STATE_DIR/targets.json"\n'
     } >"$DEST/spec.env"

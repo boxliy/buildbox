@@ -1,0 +1,164 @@
+name: Trusted prepare
+on:
+  workflow_call:
+    inputs:
+      build_run_id:
+        required: true
+        type: string
+    secrets:
+      HAWK_BASE_URL:
+        required: true
+      HAWK_OIDC_AUDIENCE:
+        required: true
+      AVIARY_SOURCE_APP_PRIVATE_KEY:
+        required: true
+    outputs:
+      flutter_version:
+        value: ${{ jobs.prepare.outputs.flutter_version }}
+      platform:
+        value: ${{ jobs.prepare.outputs.platform }}
+      failure_reason:
+        value: ${{ jobs.prepare.outputs.failure_reason }}
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      checkout_repository: ${{ steps.spec.outputs.checkout_repository }}
+      commit_sha: ${{ steps.spec.outputs.commit_sha }}
+      flutter_version: ${{ steps.platform.outputs.flutter_version }}
+      platform: ${{ steps.platform.outputs.platform }}
+      failure_reason: ${{ steps.failure.outputs.reason }}
+    env:
+      BUILDBOX_RUN_ID: ${{ inputs.build_run_id }}
+      BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Initialize isolated state directory
+        run: echo "BUILDBOX_STATE_DIR=$RUNNER_TEMP/buildbox" >>"$GITHUB_ENV"
+      - name: Checkout buildbox
+        uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
+        with:
+          repository: boxliy/buildbox
+          ref: 74d5fdd0bf96426703cdc809f79ee9020b249e5d
+          persist-credentials: false
+
+      - name: Exchange prepare credential
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+        run: scripts/exchange-stage prepare
+
+      - name: Load build spec
+        id: spec
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+        run: scripts/load-build-spec "$BUILDBOX_RUN_ID"
+
+      - name: Refuse public artifact transport
+        id: public-repository
+        shell: bash
+        run: |
+          if [[ "${{ github.event.repository.private }}" != "true" ]]; then
+            printf 'public repository cannot carry unsigned build artifacts\n' >&2
+            exit 1
+          fi
+
+      - name: Read frozen platform and source scope
+        id: platform
+        env:
+          ALLOWED_SOURCE: ${{ vars.AVIARY_SOURCE_REPOSITORY }}
+          SOURCE: ${{ steps.spec.outputs.checkout_repository }}
+        run: |
+          test -n "$ALLOWED_SOURCE" && test "$SOURCE" = "$ALLOWED_SOURCE"
+          platform=$(jq -er '.config.platform | select(. == "android" or . == "ios")' "$BUILDBOX_STATE_DIR/spec.json")
+          echo "platform=$platform" >>"$GITHUB_OUTPUT"
+          flutter_version=$(jq -er '.config.frozenInputs.flutterVersion | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$BUILDBOX_STATE_DIR/spec.json")
+          echo "flutter_version=$flutter_version" >>"$GITHUB_OUTPUT"
+          echo "owner=${SOURCE%%/*}" >>"$GITHUB_OUTPUT"
+          echo "repository=${SOURCE#*/}" >>"$GITHUB_OUTPUT"
+
+      - name: Mint short-lived source read credential
+        id: source-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.AVIARY_SOURCE_APP_ID }}
+          private-key: ${{ secrets.AVIARY_SOURCE_APP_PRIVATE_KEY }}
+          owner: ${{ steps.platform.outputs.owner }}
+          repositories: ${{ steps.platform.outputs.repository }}
+          permission-contents: read
+
+      - name: Fetch exact source in trusted prepare
+        uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c
+        with:
+          repository: ${{ steps.spec.outputs.checkout_repository }}
+          ref: ${{ steps.spec.outputs.commit_sha }}
+          token: ${{ steps.source-token.outputs.token }}
+          path: aviary-source
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Preserve source permissions and Git object identity
+        run: tar -cf "$RUNNER_TEMP/source.tar" -C "$GITHUB_WORKSPACE" aviary-source
+
+      - name: Preserve source in private artifact transport
+        uses: actions/upload-artifact@50769540e7f4bd7f9d42d1b79bccb20935c6c3aa
+        with:
+          name: source-${{ github.run_id }}
+          path: ${{ runner.temp }}/source.tar
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Export compile inputs
+        run: scripts/export-job-inputs compile ${{ runner.temp }}/compile-input
+
+      - name: Preserve compile inputs
+        uses: actions/upload-artifact@50769540e7f4bd7f9d42d1b79bccb20935c6c3aa # v4.6.0
+        with:
+          name: compile-input-${{ github.run_id }}
+          path: ${{ runner.temp }}/compile-input
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Export sign inputs
+        run: scripts/export-job-inputs sign ${{ runner.temp }}/sign-input
+
+      - name: Preserve sign inputs
+        uses: actions/upload-artifact@50769540e7f4bd7f9d42d1b79bccb20935c6c3aa # v4.6.0
+        with:
+          name: sign-input-${{ github.run_id }}
+          path: ${{ runner.temp }}/sign-input
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Record immutable input handoff
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+        run: |
+          curl --fail --silent --show-error --request POST \
+            --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
+            "${HAWK_BASE_URL%/}/api/v1/buildbox/runs/$BUILDBOX_RUN_ID/prepare-complete"
+
+      # The reason is a job output. A later runner cannot read this job's temp directory.
+      - name: Record prepare failure
+        id: failure
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          if [[ "${{ steps.public-repository.outcome }}" == "failure" ]]; then
+            reason='public repository cannot carry unsigned build artifacts'
+          elif [[ "${{ steps.spec.outcome }}" == "failure" ]]; then
+            reason='prepare could not load the frozen build spec'
+          else
+            reason='prepare failed before compile'
+          fi
+          printf 'reason=%s\n' "$reason" >>"$GITHUB_OUTPUT"
+
