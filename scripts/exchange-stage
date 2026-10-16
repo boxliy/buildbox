@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Exchange a GitHub Actions OIDC token for one attempt-scoped stage credential.
 # The shared service bearer is not accepted. The credential stays in
-# GITHUB_ENV and is never written to stdout, where Actions would log it.
+# GITHUB_ENV; its only stdout use is the Actions secret-masking command.
 set -Eeuo pipefail
 set +x
 

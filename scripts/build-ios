@@ -5,7 +5,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 state=${BUILDBOX_STATE_DIR:?}
 source_root=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:?}/aviary-source}
 [[ "$(uname -s)" == Darwin ]] || { echo 'iOS compilation requires macOS' >&2; exit 1; }
-[[ ! -v HAWK_STAGE_TOKEN && ! -v ACTIONS_ID_TOKEN_REQUEST_TOKEN ]] || { echo 'compile runner must not carry stage credentials' >&2; exit 1; }
+[[ -z "${HAWK_STAGE_TOKEN+x}" && -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN+x}" ]] || { echo 'compile runner must not carry stage credentials' >&2; exit 1; }
 "$script_dir/verify-compile-inputs"
 jq -e '.config.platform == "ios" and .config.targets == ["ipa"]' "$state/spec.json" >/dev/null
 # The operator-approved runner's Xcode build must match the immutable Spec.
@@ -28,15 +28,10 @@ if any(c in sys.argv[3] for c in '\n\r\0'):
 Path(sys.argv[1]).write_text('SWAN_IOS_BUNDLE_ID = ' + sys.argv[2] + '\n')
 PYCFG
 export XCODE_XCCONFIG_FILE="$state/identity.xcconfig"
-args=()
-while IFS= read -r entry; do
-  key=$(printf '%s' "$entry" | base64 --decode | jq -r '.[0]')
-  value=$(printf '%s' "$entry" | base64 --decode | jq -r '.[1]')
-  args+=("--dart-define=$key=$value")
-done < <(jq -r '.config.dartDefines | to_entries[] | [.key,.value] | @base64' "$state/spec.json")
+jq -e '.config.dartDefines' "$state/spec.json" >"$state/ios-dart-defines.json"
 cd "$source_root/waterfowl/apps/swan"
 # Source build phases run only here, before any signing material is available.
-flutter build ios --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "${args[@]}"
+flutter build ios --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "--dart-define-from-file=$state/ios-dart-defines.json"
 # Plist mutation is data-only and occurs before isolated signing.
 python3 - "$name" "$state/spec.json" <<'PYNAME'
 from pathlib import Path
