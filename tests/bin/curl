@@ -123,11 +123,15 @@ case "$method:$url" in
       '{target:$target,objectKey:$objectKey,contentType:$contentType,url:$url,headers:{"Content-Type":$contentType,"x-oss-meta-file":$fileName}}')"
     ;;
   PUT:https://oss.example/*)
+    [[ "${MOCK_UPLOAD_FAIL:-0}" != 1 ]] || exit 22
     ;;
   POST:*'/api/v1/buildbox/runs/'*'/callback')
     # Hawk records GitHub callbacks only for a finalize stage credential.
     [[ "$authorization" == "Bearer stage-finalize-"* || "$authorization" == "Bearer bb1."* ]] || exit 1
     printf '%s' "$data" | jq -e '.githubRunId | type == "number" and . > 0' >/dev/null
+    if [[ -n "${MOCK_CALLBACK_LOG:-}" ]]; then
+      printf '%s\n' "$data" | jq -c . >>"$MOCK_CALLBACK_LOG"
+    fi
     ;;
   *)
     printf 'unexpected curl call: %s %s\n' "$method" "$url" >&2

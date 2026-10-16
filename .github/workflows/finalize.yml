@@ -53,7 +53,7 @@ jobs:
         run: scripts/exchange-stage finalize
 
       - name: Report prepare failure
-        if: ${{ inputs.prepare_result == 'failure' }}
+        if: ${{ success() && inputs.prepare_result == 'failure' }}
         shell: bash
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
@@ -67,7 +67,7 @@ jobs:
           scripts/report-result failed "$reason"
 
       - name: Report cancellation
-        if: ${{ inputs.prepare_result == 'cancelled' || (inputs.prepare_result == 'success' && (inputs.compile_result == 'cancelled' || inputs.sign_result == 'cancelled')) }}
+        if: ${{ success() && (inputs.prepare_result == 'cancelled' || (inputs.prepare_result == 'success' && (inputs.compile_result == 'cancelled' || inputs.sign_result == 'cancelled'))) }}
         shell: bash
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
@@ -75,45 +75,45 @@ jobs:
         run: scripts/report-result failed "Buildbox workflow was cancelled in GitHub run $BUILDBOX_GITHUB_RUN_ID"
 
       - name: Restore sign inputs
-        if: ${{ inputs.prepare_result == 'success' && inputs.compile_result == 'success' && inputs.sign_result != 'cancelled' }}
+        if: ${{ success() && inputs.prepare_result == 'success' && inputs.compile_result == 'success' && inputs.sign_result != 'cancelled' }}
         uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
         with:
           name: sign-input-${{ github.run_id }}
           path: ${{ runner.temp }}/buildbox
 
       - name: Restore signed outputs
-        if: ${{ inputs.sign_result == 'success' }}
+        if: ${{ success() && inputs.sign_result == 'success' }}
         uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
         with:
           name: signed-output-${{ github.run_id }}
           path: ${{ runner.temp }}/buildbox
 
       - name: Report running
-        if: ${{ inputs.prepare_result == 'success' && inputs.compile_result != 'cancelled' && inputs.sign_result != 'cancelled' }}
+        if: ${{ success() && inputs.prepare_result == 'success' && inputs.compile_result != 'cancelled' && inputs.sign_result != 'cancelled' }}
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
           HAWK_CALLBACK_STAGE: finalize
         run: scripts/report-result running
 
       - name: Request upload authorization
-        if: ${{ inputs.sign_result == 'success' }}
+        if: ${{ success() && inputs.sign_result == 'success' }}
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
         run: scripts/request-upload
 
       - name: Upload signed artifacts
-        if: ${{ inputs.sign_result == 'success' }}
+        if: ${{ success() && inputs.sign_result == 'success' }}
         run: scripts/upload-oss
 
       - name: Refresh finalize receipt credential after upload
-        if: ${{ inputs.sign_result == 'success' }}
+        if: ${{ success() && inputs.sign_result == 'success' }}
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
           HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
         run: scripts/exchange-stage finalize
 
       - name: Report success
-        if: ${{ inputs.sign_result == 'success' }}
+        if: ${{ success() && inputs.sign_result == 'success' }}
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
           HAWK_CALLBACK_STAGE: finalize
