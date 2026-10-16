@@ -1,0 +1,92 @@
+name: Trusted isolated signing
+on:
+  workflow_call:
+    inputs:
+      build_run_id:
+        required: true
+        type: string
+      platform:
+        required: true
+        type: string
+    secrets:
+      HAWK_BASE_URL:
+        required: true
+      HAWK_OIDC_AUDIENCE:
+        required: true
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  sign:
+    runs-on: ${{ inputs.platform == 'ios' && 'macos-15' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      BUILDBOX_RUN_ID: ${{ inputs.build_run_id }}
+      HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+      BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Initialize isolated state directory
+        run: echo "BUILDBOX_STATE_DIR=$RUNNER_TEMP/buildbox" >>"$GITHUB_ENV"
+      - name: Checkout buildbox
+        uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
+        with:
+          repository: boxliy/buildbox
+          ref: 5d07397fc365af21ac5f1a918a5dd3c6c68bcd64
+          persist-credentials: false
+
+      - name: Exchange sign credential
+        env:
+          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+        run: scripts/exchange-stage sign
+
+      - name: Setup signing Java
+        if: inputs.platform == 'android'
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare fixed Android signing tools
+        if: inputs.platform == 'android'
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0' >/dev/null
+          echo "$ANDROID_HOME/build-tools/35.0.0" >>"$GITHUB_PATH"
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/bundletool.jar" https://github.com/google/bundletool/releases/download/1.18.2/bundletool-all-1.18.2.jar
+          echo 'BUILDBOX_BUNDLETOOL_JAR='"$RUNNER_TEMP/bundletool.jar" >>"$GITHUB_ENV"
+          echo 'BUILDBOX_BUNDLETOOL_SHA256=378b5434cd1378bef6b2bc527b8c7f0ff2584b273830335bce54d6d0813c8584' >>"$GITHUB_ENV"
+
+      - name: Restore sign inputs
+        uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
+        with:
+          name: sign-input-${{ github.run_id }}
+          path: ${{ runner.temp }}/buildbox
+
+      - name: Restore unsigned outputs
+        uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
+        with:
+          name: unsigned-output-${{ github.run_id }}
+          path: ${{ runner.temp }}/buildbox
+
+      - name: Sign fixed artifacts
+        env:
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          case "$PLATFORM" in
+            android) scripts/sign-android ;;
+            ios) python3 scripts/sign_ios.py ;;
+            *) exit 1 ;;
+          esac
+
+      - name: Preserve signed outputs
+        uses: actions/upload-artifact@50769540e7f4bd7f9d42d1b79bccb20935c6c3aa # v4.6.0
+        with:
+          name: signed-output-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/buildbox/artifacts
+            ${{ runner.temp }}/buildbox/sign-proof.json
+            ${{ runner.temp }}/buildbox/artifacts.json
+          retention-days: 1
+

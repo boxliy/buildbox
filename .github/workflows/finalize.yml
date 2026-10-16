@@ -1,0 +1,128 @@
+name: Trusted finalize
+on:
+  workflow_call:
+    inputs:
+      build_run_id:
+        required: true
+        type: string
+      prepare_result:
+        required: true
+        type: string
+      compile_result:
+        required: true
+        type: string
+      sign_result:
+        required: true
+        type: string
+      failure_reason:
+        required: false
+        type: string
+    secrets:
+      HAWK_BASE_URL:
+        required: true
+      HAWK_OIDC_AUDIENCE:
+        required: true
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      BUILDBOX_RUN_ID: ${{ inputs.build_run_id }}
+      BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Initialize isolated state directory
+        run: echo "BUILDBOX_STATE_DIR=$RUNNER_TEMP/buildbox" >>"$GITHUB_ENV"
+      - name: Checkout buildbox
+        uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
+        with:
+          repository: boxliy/buildbox
+          ref: 5d07397fc365af21ac5f1a918a5dd3c6c68bcd64
+          persist-credentials: false
+
+      # Exchange before any artifact restore. A missing artifact must not block the callback.
+      - name: Exchange finalize credential
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+        run: scripts/exchange-stage finalize
+
+      - name: Report prepare failure
+        if: ${{ inputs.prepare_result == 'failure' }}
+        shell: bash
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_CALLBACK_STAGE: finalize
+          FAILURE_REASON: ${{ inputs.failure_reason }}
+        run: |
+          reason="$FAILURE_REASON"
+          if [[ -z "$reason" ]]; then
+            reason='prepare failed before compile'
+          fi
+          scripts/report-result failed "$reason"
+
+      - name: Report cancellation
+        if: ${{ inputs.prepare_result == 'success' && (inputs.compile_result == 'cancelled' || inputs.sign_result == 'cancelled') }}
+        shell: bash
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_CALLBACK_STAGE: finalize
+        run: scripts/report-result failed "Buildbox workflow was cancelled in GitHub run $BUILDBOX_GITHUB_RUN_ID"
+
+      - name: Restore sign inputs
+        if: ${{ inputs.prepare_result == 'success' && inputs.compile_result == 'success' && inputs.sign_result != 'cancelled' }}
+        uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
+        with:
+          name: sign-input-${{ github.run_id }}
+          path: ${{ runner.temp }}/buildbox
+
+      - name: Restore signed outputs
+        if: ${{ inputs.sign_result == 'success' }}
+        uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
+        with:
+          name: signed-output-${{ github.run_id }}
+          path: ${{ runner.temp }}/buildbox
+
+      - name: Report running
+        if: ${{ inputs.prepare_result == 'success' && inputs.compile_result != 'cancelled' && inputs.sign_result != 'cancelled' }}
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_CALLBACK_STAGE: finalize
+        run: scripts/report-result running
+
+      - name: Request upload authorization
+        if: ${{ inputs.sign_result == 'success' }}
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+        run: scripts/request-upload
+
+      - name: Upload signed artifacts
+        if: ${{ inputs.sign_result == 'success' }}
+        run: scripts/upload-oss
+
+      - name: Report success
+        if: ${{ inputs.sign_result == 'success' }}
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_CALLBACK_STAGE: finalize
+        run: scripts/report-result succeeded
+
+      - name: Report workflow failure
+        if: ${{ inputs.prepare_result == 'success' && inputs.compile_result != 'cancelled' && inputs.sign_result != 'cancelled' && (failure() || inputs.sign_result != 'success') }}
+        shell: bash
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_CALLBACK_STAGE: finalize
+        run: |
+          if [[ "${{ inputs.sign_result }}" == "success" ]]; then
+            scripts/report-result failed "Buildbox workflow failed in GitHub run $BUILDBOX_GITHUB_RUN_ID"
+          elif [[ "${{ inputs.compile_result }}" != "success" ]]; then
+            scripts/report-result failed "compile failed before signing"
+          else
+            scripts/report-result failed "signing failed"
+          fi
