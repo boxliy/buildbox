@@ -25,7 +25,7 @@ case "$STATUS" in
 esac
 
 [[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
-[[ -n "${HAWK_BUILDBOX_TOKEN:-}" ]] || die 'HAWK_BUILDBOX_TOKEN is required'
+[[ -n "${HAWK_STAGE_TOKEN:-}" ]] || die 'HAWK_STAGE_TOKEN is required'
 [[ -n "${BUILDBOX_GITHUB_RUN_ID:-}" ]] || die 'BUILDBOX_GITHUB_RUN_ID is required'
 [[ "$BUILDBOX_GITHUB_RUN_ID" =~ ^[0-9]+$ ]] || die 'BUILDBOX_GITHUB_RUN_ID must be an integer'
 
@@ -50,7 +50,7 @@ if [[ "$STATUS" == "succeeded" ]]; then
     --arg status "$STATUS" \
     --argjson githubRunId "$BUILDBOX_GITHUB_RUN_ID" \
     --slurpfile artifacts "$BUILDBOX_ARTIFACTS_JSON" \
-    --slurpfile uploads "$BUILDBOX_UPLOADS_JSON" \
+    --arg prefix "$BUILDBOX_ARTIFACT_PREFIX" \
     '{
       status: $status,
       githubRunId: $githubRunId,
@@ -58,14 +58,22 @@ if [[ "$STATUS" == "succeeded" ]]; then
         $artifacts[0] |
         map(
           . as $artifact |
-          ($uploads[0][] | select(.target == $artifact.target)) as $upload |
           {
             target: $artifact.target,
             fileName: $artifact.fileName,
-            contentType: $upload.contentType,
+            contentType: (
+              if $artifact.target == "apk" then "application/vnd.android.package-archive"
+              else "application/octet-stream"
+              end
+            ),
             byteSize: $artifact.byteSize,
             sha256: $artifact.sha256,
-            objectKey: $upload.objectKey,
+            objectKey: ($prefix + $artifact.target + "." + (
+              if $artifact.target == "apk" then "apk"
+              elif $artifact.target == "aab" then "aab"
+              else "ipa"
+              end
+            ))
           }
         )
       )
@@ -91,7 +99,7 @@ fi
 
 curl --fail --silent --show-error \
   --request POST \
-  --header "Authorization: Bearer $HAWK_BUILDBOX_TOKEN" \
+  --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
   --header 'Content-Type: application/json' \
   --data-binary "@$PAYLOAD" \
   "$CALLBACK_URL"

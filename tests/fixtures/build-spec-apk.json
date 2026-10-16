@@ -53,27 +53,5 @@
     "tenantId": "401"
   },
   "runId": "401",
-  "callbackUrl": "/api/v1/buildbox/runs/401/callback",
-  "uploads": [
-    {
-      "target": "apk",
-      "objectKey": "builds/spec-apk-1/build-apk-1/apk.apk",
-      "url": "https://oss.example/upload.apk",
-      "contentType": "application/vnd.android.package-archive",
-      "headers": {
-        "Content-Type": "application/vnd.android.package-archive",
-        "x-oss-meta-build-spec": "spec-apk-1"
-      }
-    },
-    {
-      "target": "aab",
-      "objectKey": "builds/spec-apk-1/build-apk-1/aab.aab",
-      "url": "https://oss.example/upload.aab",
-      "contentType": "application/octet-stream",
-      "headers": {
-        "Content-Type": "application/octet-stream",
-        "x-oss-meta-build-spec": "spec-apk-1"
-      }
-    }
-  ]
+  "callbackUrl": "/api/v1/buildbox/runs/401/callback"
 }

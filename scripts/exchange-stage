@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Exchange a GitHub Actions OIDC token for one attempt-scoped stage credential.
+# The shared service bearer is not accepted.
+set -Eeuo pipefail
+set +x
+
+usage() {
+  printf 'usage: %s <prepare|sign|finalize>\n' "${0##*/}" >&2
+}
+
+die() {
+  printf 'exchange-stage: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+[[ $# -eq 1 ]] || { usage; exit 64; }
+STAGE=$1
+case "$STAGE" in
+  prepare | sign | finalize) ;;
+  *) die 'stage must be prepare, sign, or finalize' ;;
+esac
+
+[[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
+[[ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" && -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]] \
+  || die 'GitHub Actions OIDC request is required'
+[[ -n "${BUILDBOX_RUN_ID:-}" ]] || die 'BUILDBOX_RUN_ID is required'
+[[ "$BUILDBOX_RUN_ID" =~ ^[0-9]+$ ]] || die 'BUILDBOX_RUN_ID must be a platform run id'
+
+require_command curl
+require_command jq
+
+AUDIENCE=${HAWK_OIDC_AUDIENCE:-https://hawk.example/api/v1/buildbox/auth/exchange}
+OIDC_RESPONSE=$(curl --fail --silent --show-error \
+  --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+  "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}")
+OIDC_TOKEN=$(printf '%s' "$OIDC_RESPONSE" | jq -er '.value | select(type == "string" and length > 0)') \
+  || die 'GitHub did not return an OIDC token'
+
+BASE_URL=${HAWK_BASE_URL%/}
+EXCHANGE_BODY=$(jq -nc \
+  --arg oidcToken "$OIDC_TOKEN" \
+  --argjson runId "$BUILDBOX_RUN_ID" \
+  --arg stage "$STAGE" \
+  '{oidcToken: $oidcToken, runId: $runId, stage: $stage}')
+RESPONSE=$(curl --fail --silent --show-error \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: application/json' \
+  --data-binary "$EXCHANGE_BODY" \
+  "$BASE_URL/api/v1/buildbox/auth/exchange")
+TOKEN=$(printf '%s' "$RESPONSE" | jq -er '.token | select(type == "string" and length > 0)') \
+  || die 'Hawk did not return a stage credential'
+RETURNED_STAGE=$(printf '%s' "$RESPONSE" | jq -er '.stage')
+[[ "$RETURNED_STAGE" == "$STAGE" ]] || die 'stage credential does not match the requested stage'
+
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  if grep -q '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV"; then
+    grep -v '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV" >"$GITHUB_ENV.next"
+    mv "$GITHUB_ENV.next" "$GITHUB_ENV"
+  fi
+  printf 'HAWK_STAGE_TOKEN=%s\n' "$TOKEN" >>"$GITHUB_ENV"
+fi
+printf '%s\n' "$TOKEN"

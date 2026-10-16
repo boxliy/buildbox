@@ -17,17 +17,21 @@ No repository, commit, upload URL, token, or business configuration is accepted
 as workflow input. Runtime authority comes from these repository secrets:
 
 - `HAWK_BASE_URL`
-- `HAWK_BUILDBOX_TOKEN`
+- `HAWK_OIDC_AUDIENCE`: audience Hawk expects on the Actions OIDC token
 - `AVIARY_SOURCE_TOKEN`: read-only access to the private Aviary repository
+
+Prepare and finalize exchange a short-lived stage credential with
+`POST /api/v1/buildbox/auth/exchange`. The shared `HAWK_BUILDBOX_TOKEN` is not
+a substitute and is not sent. Compile and sign have no platform credential.
 
 Jobs run on separate runners:
 
-| Job | Hawk token | Role |
-|-----|------------|------|
-| `prepare` | yes | Load spec, verify hash, reject a public repository, then report `running` |
-| `compile` | no | Checkout Aviary at `commitSha`, build `unsigned_release` outputs |
-| `sign` | no | Isolated signing step; fails closed without a real signer |
-| `finalize` | yes | Upload only after sign succeeds; otherwise report `failed` |
+| Job | Platform credential | Role |
+|-----|--------------------|------|
+| `prepare` | prepare stage | Exchange OIDC, load spec without uploads, reject a public repository, then report `running` |
+| `compile` | none | Checkout Aviary at `commitSha`, build `unsigned_release` outputs |
+| `sign` | none | Isolated signing step; fails closed without a real signer |
+| `finalize` | finalize stage | Request one upload grant per target, then upload or report `failed` |
 
 The compile job never receives `HAWK_BUILDBOX_TOKEN`, signing material, the
 Hawk response body, or presigned upload URLs. `prepare` exports a compile
@@ -54,21 +58,23 @@ The loader recomputes and rejects mismatches.
 
 `scripts/load-build-spec` requires:
 
-- `sourceRepo`, `commitSha`, `targets`, `runId`, `config`, `specHash`
-- `artifactPrefix`, `uploads[]` with `target`, `url`, `contentType`, `headers`, `objectKey`
+- `sourceRepo`, `commitSha`, `targets`, `runId`, `config`, `specHash`, `artifactPrefix`
 - `config.androidApplicationId`, `config.appDisplayName`
+
+The prepare response has no `uploads`. Finalize requests each target with
+`POST /api/v1/buildbox/runs/{runId}/artifact-uploads` after signing.
 
 Optional: `config.dartDefines`, `config.swanConfig`.
 
-Callbacks: `POST /api/v1/buildbox/runs/{runId}/callback` with `status`,
-`githubRunId`, and `artifacts[]` on success.
+Callbacks: `POST /api/v1/buildbox/runs/{runId}/callback` with the finalize
+stage credential, `status`, `githubRunId`, and `artifacts[]` on success.
 
-## OIDC and short-lived credentials (phase B)
+## OIDC and short-lived credentials
 
-Phase A still uses the shared bearer for prepare/finalize against Hawk.
-GitHub OIDC exchange (`POST /api/v1/buildbox/auth/exchange`), stage-scoped
-tokens, and reusable workflow SHA pinning for prepare/sign/finalize will land
-with Hawk integration in AVIARY-47 phase B.
+Prepare and finalize call `scripts/exchange-stage` before any Hawk read or
+callback. The workflow grants `id-token: write` only on those two jobs.
+Reusable workflow SHA pinning for the sign job remains unimplemented. A
+missing signing key still fails closed and is not a signed delivery.
 
 ## Local contract tests
 

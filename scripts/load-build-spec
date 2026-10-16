@@ -40,7 +40,7 @@ else
   die 'dispatch id must be a platform run id or build_spec_id:run_id'
 fi
 [[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
-[[ -n "${HAWK_BUILDBOX_TOKEN:-}" ]] || die 'HAWK_BUILDBOX_TOKEN is required'
+[[ -n "${HAWK_STAGE_TOKEN:-}" ]] || die 'HAWK_STAGE_TOKEN is required'
 
 require_command curl
 require_command jq
@@ -65,7 +65,7 @@ else
 fi
 
 curl --fail --silent --show-error \
-  --header "Authorization: Bearer $HAWK_BUILDBOX_TOKEN" \
+  --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
   --header 'Accept: application/json' \
   --output "$SPEC_RESPONSE" \
   "$SPEC_URL"
@@ -106,44 +106,10 @@ jq -e \
 ' \
   "$SPEC_RESPONSE" >/dev/null || die 'signed config does not match build spec fields'
 
-UPLOADS_COMPACT=$(jq -cer --argjson targets "$TARGETS_COMPACT" --arg prefix "$ARTIFACT_PREFIX" '
-  .uploads as $uploads |
-  [
-    $targets[] as $target |
-    if ($uploads | length) > 0 then
-      (
-        $uploads[] |
-        select(.target == $target or
-          (.target == "android_apk" and $target == "apk") or
-          (.target == "android_aab" and $target == "aab")) |
-        {
-          target: $target,
-          objectKey: (.objectKey // ""),
-          url: .url,
-          contentType: .contentType,
-          headers: (.headers // {})
-        }
-      )
-    else empty end
-  ] |
-  select(length == ($targets | length)) |
-  select(all(.[];
-    (.url | type == "string" and length > 0) and
-    (.headers | type == "object") and
-    (if .target == "apk" then
-      .objectKey == ($prefix + "apk.apk") and
-      .contentType == "application/vnd.android.package-archive"
-    elif .target == "aab" then
-      .objectKey == ($prefix + "aab.aab") and
-      .contentType == "application/octet-stream"
-    elif .target == "ipa" then
-      .objectKey == ($prefix + "ipa.ipa") and
-      .contentType == "application/octet-stream"
-    else
-      false
-    end)
-  ))
-' "$SPEC_RESPONSE") || die 'each target must have a matching presigned upload url, contentType, and object key'
+# Prepare reads the frozen Spec only. Upload grants are a separate finalize request.
+if jq -e 'has("uploads") and (.uploads | type == "array" and length > 0)' "$SPEC_RESPONSE" >/dev/null; then
+  die 'prepare spec must not include upload authorization'
+fi
 
 if [[ ! "$COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
   die "commitSha must be a full 40-character SHA"
@@ -161,7 +127,7 @@ if [[ ! "$CHECKOUT_REPOSITORY" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
 fi
 
 printf '%s\n' "$TARGETS_COMPACT" | jq -e '.' >"$TARGETS_JSON"
-printf '%s\n' "$UPLOADS_COMPACT" | jq -e '.' >"$UPLOADS_JSON"
+printf '[]\n' | jq -e '.' >"$UPLOADS_JSON"
 
 jq -e '
   {
@@ -173,7 +139,6 @@ jq -e '
     runId: .runId,
     specHash: .specHash,
     config: .config,
-    uploads: $uploads,
     dartDefines: (.config.dartDefines // {}),
     swanConfig: (.config.swanConfig // {})
   }
@@ -181,7 +146,6 @@ jq -e '
   --arg buildSpecId "$BUILD_SPEC_ID" \
   --arg checkoutRepository "$CHECKOUT_REPOSITORY" \
   --argjson targets "$TARGETS_COMPACT" \
-  --argjson uploads "$UPLOADS_COMPACT" \
   "$SPEC_RESPONSE" >"$SPEC_JSON"
 
 jq -e '.dartDefines | objects' "$SPEC_JSON" >"$DART_DEFINES_JSON"
@@ -199,6 +163,7 @@ TARGETS_CSV=$(jq -r 'join(",")' "$TARGETS_JSON")
   printf 'BUILDBOX_SPEC_HASH=%q\n' "$SPEC_HASH"
   printf 'BUILDBOX_ANDROID_APPLICATION_ID=%q\n' "$ANDROID_APPLICATION_ID"
   printf 'BUILDBOX_APP_DISPLAY_NAME=%q\n' "$APP_DISPLAY_NAME"
+  printf 'BUILDBOX_ARTIFACT_PREFIX=%q\n' "$ARTIFACT_PREFIX"
   printf 'BUILDBOX_SPEC_JSON=%q\n' "$SPEC_JSON"
   printf 'BUILDBOX_TARGETS_JSON=%q\n' "$TARGETS_JSON"
   printf 'BUILDBOX_UPLOADS_JSON=%q\n' "$UPLOADS_JSON"

@@ -7,8 +7,10 @@ TMP_DIR=$(mktemp -d)
 export PATH="$ROOT/tests/bin:$PATH"
 export FIXTURE_DIR="$ROOT/tests/fixtures"
 export HAWK_BASE_URL='https://hawk.example'
-export HAWK_BUILDBOX_TOKEN='contract-token'
 export BUILDBOX_STATE_DIR="$TMP_DIR/state"
+export ACTIONS_ID_TOKEN_REQUEST_TOKEN='oidc-request-token'
+export ACTIONS_ID_TOKEN_REQUEST_URL='https://oidc.example/token?request=1'
+export BUILDBOX_RUN_ID=401
 export CURL_LOG="$TMP_DIR/curl.log"
 export FLUTTER_LOG="$TMP_DIR/flutter.log"
 export GITHUB_WORKSPACE="$TMP_DIR/workspace"
@@ -47,6 +49,10 @@ if grep -F 'HAWK_BUILDBOX_TOKEN' <<<"$COMPILE_JOB" >/dev/null; then
   printf 'compile job must not receive the Hawk service token\n' >&2
   exit 1
 fi
+if grep -F 'id-token: write' <<<"$COMPILE_JOB" >/dev/null; then
+  printf 'compile job must not request an Actions OIDC token\n' >&2
+  exit 1
+fi
 if grep -F 'build-input-' <<<"$COMPILE_JOB" >/dev/null; then
   printf 'compile job must not download the full prepare artifact\n' >&2
   exit 1
@@ -56,6 +62,14 @@ if ! grep -F 'compile-input-' <<<"$COMPILE_JOB" >/dev/null; then
   exit 1
 fi
 PREPARE_JOB=$(sed -n '/^  prepare:/,/^  compile:/p' "$ROOT/.github/workflows/build.yml")
+if ! grep -F 'scripts/exchange-stage prepare' <<<"$PREPARE_JOB" >/dev/null; then
+  printf 'prepare must exchange a stage credential before reading the spec\n' >&2
+  exit 1
+fi
+if grep -F 'HAWK_BUILDBOX_TOKEN' "$ROOT/.github/workflows/build.yml" >/dev/null; then
+  printf 'workflow must not send the shared buildbox bearer\n' >&2
+  exit 1
+fi
 if ! grep -F "github.event_name == 'workflow_dispatch'" <<<"$PREPARE_JOB" >/dev/null; then
   printf 'prepare must skip the push event GitHub sends when the workflow file changes\n' >&2
   exit 1
@@ -72,6 +86,14 @@ if ! grep -F '.github/workflows/build.yml' <<<"$PUSH_TRIGGER" >/dev/null; then
 fi
 SIGN_JOB=$(sed -n '/^  sign:/,/^  finalize:/p' "$ROOT/.github/workflows/build.yml")
 FINALIZE_JOB=$(sed -n '/^  finalize:/,$p' "$ROOT/.github/workflows/build.yml")
+if ! grep -F 'scripts/exchange-stage finalize' <<<"$FINALIZE_JOB" >/dev/null; then
+  printf 'finalize must exchange its own stage credential\n' >&2
+  exit 1
+fi
+if ! grep -F 'scripts/request-upload' <<<"$FINALIZE_JOB" >/dev/null; then
+  printf 'finalize must request upload grants separately from the spec read\n' >&2
+  exit 1
+fi
 if ! grep -F 'public repository cannot carry unsigned build artifacts' <<<"$PREPARE_JOB" >/dev/null; then
   printf 'prepare must fail closed on a public repository\n' >&2
   exit 1
@@ -105,7 +127,18 @@ if ! grep -F 'needs.sign.result == '"'"'success'"'" <<<"$FINALIZE_JOB" >/dev/nul
 fi
 
 export MOCK_GIT_HEAD='1111111111111111111111111111111111111111'
+export BUILDBOX_RUN_ID=401
+"$ROOT/scripts/exchange-stage" prepare >/dev/null
+set -a
+# shellcheck disable=SC1090
+source "$GITHUB_ENV"
+set +a
+[[ -n "${HAWK_STAGE_TOKEN:-}" ]] || { printf 'prepare exchange did not publish a stage token\n' >&2; exit 1; }
 "$ROOT/scripts/load-build-spec" 101:401
+if jq -e 'has("uploads") and (.uploads | type == "array" and length > 0)' "$BUILDBOX_STATE_DIR/spec-response.json" >/dev/null; then
+  printf 'prepare spec response must not include uploads\n' >&2
+  exit 1
+fi
 "$ROOT/scripts/report-result" running
 "$ROOT/scripts/export-job-inputs" compile "$TMP_DIR/compile-input"
 if [[ -e "$TMP_DIR/compile-input/uploads.json" || -e "$TMP_DIR/compile-input/spec-response.json" ]]; then
@@ -188,7 +221,8 @@ source "$BUILDBOX_STATE_DIR/spec.env"
 assert_file_contains "$GITHUB_OUTPUT" "checkout_repository=boxliy/aviary"
 assert_file_contains "$GITHUB_OUTPUT" "commit_sha=1111111111111111111111111111111111111111"
 assert_file_contains "$GITHUB_OUTPUT" "targets=apk,aab"
-[[ "$(cat "$GITHUB_ENV")" == "UNCHANGED=1" ]]
+grep -q '^UNCHANGED=1$' "$GITHUB_ENV"
+grep -q '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV"
 assert_file_contains "$FLUTTER_LOG" "build apk --release"
 assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
 assert_file_contains "$FLUTTER_LOG" "SWAN_ANDROID_APPLICATION_ID=com.example_alpha"
@@ -202,6 +236,11 @@ assert_file_contains "$FLUTTER_LOG" "android.permission.ACCESS_FINE_LOCATION"
 assert_file_contains "$FLUTTER_LOG" "android.permission.USE_BIOMETRIC"
 assert_file_contains "$FLUTTER_LOG" 'android:scheme="com.example-alpha"'
 assert_file_not_contains "$CURL_LOG" "contract-token"
+assert_file_contains "$CURL_LOG" "/api/v1/buildbox/auth/exchange"
+if grep -F 'HAWK_BUILDBOX_TOKEN' "$CURL_LOG" >/dev/null; then
+  printf 'prepare must not send the shared bearer\n' >&2
+  exit 1
+fi
 jq -e '
   .status == "running" and
   .githubRunId == 987654321 and
@@ -223,6 +262,12 @@ export CURL_LOG FLUTTER_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
 mkdir -p "$BUILDBOX_STATE_DIR"
 
 export MOCK_GIT_HEAD='2222222222222222222222222222222222222222'
+export BUILDBOX_RUN_ID=402
+"$ROOT/scripts/exchange-stage" prepare >/dev/null
+set -a
+# shellcheck disable=SC1090
+source "$GITHUB_ENV"
+set +a
 "$ROOT/scripts/load-build-spec" 102:402
 "$ROOT/scripts/export-job-inputs" compile "$TMP_DIR/compile-input-aab"
 rm -rf "$BUILDBOX_STATE_DIR"
@@ -252,6 +297,12 @@ export CURL_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
 mkdir -p "$BUILDBOX_STATE_DIR"
 
 export MOCK_GIT_HEAD='3333333333333333333333333333333333333333'
+export BUILDBOX_RUN_ID=401
+"$ROOT/scripts/exchange-stage" prepare >/dev/null
+set -a
+# shellcheck disable=SC1090
+source "$GITHUB_ENV"
+set +a
 "$ROOT/scripts/load-build-spec" 101:401
 "$ROOT/scripts/export-job-inputs" compile "$TMP_DIR/compile-input-mismatch"
 rm -rf "$BUILDBOX_STATE_DIR"
@@ -276,6 +327,12 @@ BUILDBOX_STATE_DIR="$TMP_DIR/state-tampered"
 GITHUB_OUTPUT="$TMP_DIR/github-output-tampered.log"
 export BUILDBOX_STATE_DIR GITHUB_OUTPUT
 mkdir -p "$BUILDBOX_STATE_DIR"
+export BUILDBOX_RUN_ID=403
+"$ROOT/scripts/exchange-stage" prepare >/dev/null
+set -a
+# shellcheck disable=SC1090
+source "$GITHUB_ENV"
+set +a
 if "$ROOT/scripts/load-build-spec" 103:403 2>"$TMP_DIR/tampered.err"; then
   printf 'expected a mismatched spec hash to fail\n' >&2
   exit 1
@@ -289,6 +346,12 @@ GITHUB_OUTPUT="$TMP_DIR/github-output-public.log"
 export CURL_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
 mkdir -p "$BUILDBOX_STATE_DIR"
 export MOCK_GIT_HEAD='1111111111111111111111111111111111111111'
+export BUILDBOX_RUN_ID=401
+"$ROOT/scripts/exchange-stage" prepare >/dev/null
+set -a
+# shellcheck disable=SC1090
+source "$GITHUB_ENV"
+set +a
 "$ROOT/scripts/load-build-spec" 101:401
 printf '%s\n' 'public repository cannot carry unsigned build artifacts' >"$BUILDBOX_STATE_DIR/prepare-failure.txt"
 "$ROOT/scripts/report-result" failed "$(head -n 1 "$BUILDBOX_STATE_DIR/prepare-failure.txt")"
@@ -311,6 +374,12 @@ GITHUB_OUTPUT="$TMP_DIR/github-output-run.log"
 export CURL_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
 mkdir -p "$BUILDBOX_STATE_DIR"
 export MOCK_GIT_HEAD='1111111111111111111111111111111111111111'
+export BUILDBOX_RUN_ID=401
+"$ROOT/scripts/exchange-stage" prepare >/dev/null
+set -a
+# shellcheck disable=SC1090
+source "$GITHUB_ENV"
+set +a
 "$ROOT/scripts/load-build-spec" 401
 assert_file_contains "$CURL_LOG" '/api/v1/buildbox/runs/401/spec'
 if grep -F '/build-specs/' "$CURL_LOG" >/dev/null; then

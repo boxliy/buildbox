@@ -39,14 +39,5 @@
     "tenantId": "402"
   },
   "runId": "402",
-  "callbackUrl": "/api/v1/buildbox/runs/402/callback",
-  "uploads": [
-    {
-      "target": "aab",
-      "objectKey": "builds/spec-aab-1/build-aab-1/aab.aab",
-      "url": "https://oss.example/upload.aab",
-      "contentType": "application/octet-stream",
-      "headers": {}
-    }
-  ]
+  "callbackUrl": "/api/v1/buildbox/runs/402/callback"
 }

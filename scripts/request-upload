@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Ask Hawk for one finalize upload grant. Prepare Spec reads do not include URLs.
+set -Eeuo pipefail
+set +x
+
+die() {
+  printf 'request-upload: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/targets.sh
+source "$SCRIPT_DIR/lib/targets.sh"
+
+[[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
+[[ -n "${HAWK_STAGE_TOKEN:-}" ]] || die 'HAWK_STAGE_TOKEN is required'
+
+require_command curl
+require_command jq
+
+STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
+SPEC_ENV="$STATE_DIR/spec.env"
+ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
+SIGN_PROOF_JSON="$STATE_DIR/sign-proof.json"
+[[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
+[[ -f "$ARTIFACTS_JSON" ]] || die "missing artifact metadata: $ARTIFACTS_JSON"
+[[ -f "$SIGN_PROOF_JSON" ]] || die "missing sign proof: $SIGN_PROOF_JSON"
+# shellcheck disable=SC1090
+source "$SPEC_ENV"
+[[ -n "${BUILDBOX_RUN_ID:-}" ]] || die 'BUILDBOX_RUN_ID is required'
+
+BASE_URL=${HAWK_BASE_URL%/}
+UPLOADS_JSON="$STATE_DIR/uploads.json"
+: >"$UPLOADS_JSON.tmp"
+
+while IFS= read -r target; do
+  artifact=$(jq -ce --arg target "$target" '.[] | select(.target == $target)' "$ARTIFACTS_JSON") \
+    || die "missing signed artifact for target: $target"
+  file_name=$(printf '%s' "$artifact" | jq -er '.fileName')
+  byte_size=$(printf '%s' "$artifact" | jq -er '.byteSize')
+  sha256=$(printf '%s' "$artifact" | jq -er '.sha256')
+  body=$(jq -nc \
+    --arg target "$target" \
+    --arg fileName "$file_name" \
+    --argjson byteSize "$byte_size" \
+    --arg sha256 "$sha256" \
+    --arg contentType "$(target_content_type "$target")" \
+    '{target:$target,fileName:$fileName,contentType:$contentType,byteSize:$byteSize,sha256:$sha256}')
+  response=$(curl --fail --silent --show-error \
+    --request POST \
+    --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
+    --header 'Content-Type: application/json' \
+    --header 'Accept: application/json' \
+    --data-binary "$body" \
+    "$BASE_URL/api/v1/buildbox/runs/$BUILDBOX_RUN_ID/artifact-uploads")
+  printf '%s\n' "$response" >>"$UPLOADS_JSON.tmp"
+done < <(jq -r '.[]' "$BUILDBOX_TARGETS_JSON")
+
+jq -s '.' <"$UPLOADS_JSON.tmp" >"$UPLOADS_JSON"
+rm -f "$UPLOADS_JSON.tmp"
+printf 'BUILDBOX_UPLOADS_JSON=%q\n' "$UPLOADS_JSON" >>"$SPEC_ENV"
+printf 'Requested upload grants for run %s\n' "$BUILDBOX_RUN_ID"

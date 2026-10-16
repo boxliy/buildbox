@@ -24,6 +24,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       checkout_repository: ${{ steps.spec.outputs.checkout_repository }}
       commit_sha: ${{ steps.spec.outputs.commit_sha }}
@@ -35,11 +38,16 @@ jobs:
       - name: Checkout buildbox
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
 
+      - name: Exchange prepare credential
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+        run: scripts/exchange-stage prepare
+
       - name: Load build spec
         id: spec
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
         run: scripts/load-build-spec "$BUILDBOX_RUN_ID"
 
       - name: Refuse public artifact transport
@@ -80,7 +88,6 @@ jobs:
         if: success()
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
         run: scripts/report-result running
 
       - name: Report prepare failure
@@ -88,7 +95,6 @@ jobs:
         shell: bash
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
         run: |
           reason='Buildbox prepare failed'
           if [[ -f "$BUILDBOX_STATE_DIR/prepare-failure.txt" ]]; then
@@ -198,6 +204,9 @@ jobs:
     needs: [prepare, compile, sign]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     env:
       BUILDBOX_STATE_DIR: ${{ runner.temp }}/buildbox
       BUILDBOX_RUN_ID: ${{ inputs.build_run_id }}
@@ -219,12 +228,17 @@ jobs:
           name: signed-output-${{ github.run_id }}
           path: ${{ runner.temp }}/buildbox
 
-      - name: Refresh upload authorization
+      - name: Exchange finalize credential
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+        run: scripts/exchange-stage finalize
+
+      - name: Request upload authorization
         if: ${{ needs.sign.result == 'success' }}
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
-        run: scripts/load-build-spec "$BUILDBOX_RUN_ID"
+        run: scripts/request-upload
 
       - name: Upload signed artifacts
         if: ${{ needs.sign.result == 'success' }}
@@ -234,7 +248,6 @@ jobs:
         if: ${{ needs.sign.result == 'success' }}
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
         run: scripts/report-result succeeded
 
       - name: Report workflow failure
@@ -242,5 +255,4 @@ jobs:
         shell: bash
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-          HAWK_BUILDBOX_TOKEN: ${{ secrets.HAWK_BUILDBOX_TOKEN }}
         run: scripts/report-result failed "Buildbox workflow failed in GitHub run $BUILDBOX_GITHUB_RUN_ID"
