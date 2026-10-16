@@ -28,10 +28,10 @@ Jobs run on separate runners:
 
 | Job | Platform credential | Role |
 |-----|--------------------|------|
-| `prepare` | prepare stage | Exchange OIDC, load spec without uploads, reject a public repository, then report `running` |
+| `prepare` | prepare stage | Exchange OIDC, load spec without uploads, reject a public repository |
 | `compile` | none | Checkout Aviary at `commitSha`, build `unsigned_release` outputs |
 | `sign` | none | Isolated signing step; fails closed without a real signer |
-| `finalize` | finalize stage | Request one upload grant per target, then upload or report `failed` |
+| `finalize` | finalize stage | Report `running` after prepare, then upload or report one terminal status |
 
 The compile job never receives `HAWK_BUILDBOX_TOKEN`, signing material, the
 Hawk response body, or presigned upload URLs. `prepare` exports a compile
@@ -68,8 +68,12 @@ Optional: `config.dartDefines`, `config.swanConfig`.
 
 Callbacks: `POST /api/v1/buildbox/runs/{runId}/callback` with the finalize
 stage credential, `status`, `githubRunId`, and `artifacts[]` on success.
-Prepare does not callback. Finalize exchanges its own credential, then reports
-`running`, and later `succeeded` or `failed`. A prepare credential is rejected.
+Prepare does not callback. Finalize exchanges its credential before restoring
+any artifact. Prepare failure, including the public-repository refusal, and
+compile or sign cancellation each send one `failed` callback. That path does
+not read a job artifact. After a successful prepare that was not cancelled,
+finalize reports `running`, then `succeeded` or `failed`. A prepare credential
+is rejected. Hawk has no `cancelled` status, so cancellation is `failed`.
 
 ## OIDC and short-lived credentials
 
@@ -93,9 +97,10 @@ tests/contract.sh
 - `sign-android` has no production signer. Missing material and a present
   material directory both fail. That failure is not a signed delivery.
 - Compile and sign artifacts omit presigned URLs. `prepare` rejects a public
-  repository before later jobs. Finalize then reports that failure with a
-  finalize credential, so Hawk does not stay `running` and prepare never
-  sends the callback.
+  repository before later jobs and publishes the reason as a job output.
+  Finalize reports that failure, and a cancelled compile or sign, with a
+  finalize credential. The failure callback does not restore an artifact.
+  Prepare never sends the callback.
   Unsigned outputs are not published as Actions artifacts until a private
   runner is available.
 - OIDC, reusable workflow SHA pins, and real keystore signing remain phase B.

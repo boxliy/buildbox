@@ -36,10 +36,16 @@ require_command curl
 require_command jq
 
 STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
+mkdir -p "$STATE_DIR"
 SPEC_ENV="$STATE_DIR/spec.env"
-[[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
-# shellcheck disable=SC1090
-source "$SPEC_ENV"
+# Failure and cancellation callbacks run before any job artifact exists.
+# A missing spec env is valid for those statuses when the platform run id is already set.
+if [[ -f "$SPEC_ENV" ]]; then
+  # shellcheck disable=SC1090
+  source "$SPEC_ENV"
+fi
+[[ -n "${BUILDBOX_RUN_ID:-}" ]] || die 'BUILDBOX_RUN_ID is required'
+[[ "$BUILDBOX_RUN_ID" =~ ^[0-9]+$ ]] || die 'BUILDBOX_RUN_ID must be a platform run id'
 
 BUILDBOX_ARTIFACTS_JSON="$STATE_DIR/artifacts.json"
 
@@ -48,6 +54,8 @@ BASE_URL=${HAWK_BASE_URL%/}
 CALLBACK_URL="$BASE_URL/api/v1/buildbox/runs/$BUILDBOX_RUN_ID/callback"
 
 if [[ "$STATUS" == "succeeded" ]]; then
+  [[ -f "$SPEC_ENV" ]] || die "missing spec env: $SPEC_ENV"
+  [[ -n "${BUILDBOX_ARTIFACT_PREFIX:-}" ]] || die 'BUILDBOX_ARTIFACT_PREFIX is required'
   [[ -n "${BUILDBOX_ARTIFACTS_JSON:-}" ]] || die 'missing artifacts metadata for success callback'
   jq -n \
     --arg status "$STATUS" \

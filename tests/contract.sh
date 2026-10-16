@@ -116,8 +116,25 @@ if [[ -z "$prepare_public" ]]; then
   printf 'prepare must reject a public repository before later jobs\n' >&2
   exit 1
 fi
-if ! grep -F "needs.prepare.result == 'success'" <<<"$FINALIZE_JOB" >/dev/null; then
-  printf 'finalize must stay gated on prepare success so it does not send a second callback\n' >&2
+if grep -F "needs.prepare.result == 'success'" <<<"$FINALIZE_JOB" >/dev/null \
+  && grep -F 'if:' <<<"$FINALIZE_JOB" | head -n 1 | grep -F "needs.prepare.result == 'success'" >/dev/null; then
+  printf 'finalize job must run after prepare failure so Hawk receives one terminal callback\n' >&2
+  exit 1
+fi
+if ! grep -F "github.event_name == 'workflow_dispatch'" <<<"$FINALIZE_JOB" >/dev/null; then
+  printf 'finalize must run for workflow_dispatch even when prepare fails\n' >&2
+  exit 1
+fi
+if ! grep -F "needs.prepare.result != 'skipped'" <<<"$FINALIZE_JOB" >/dev/null; then
+  printf 'finalize must skip the push event that never starts prepare\n' >&2
+  exit 1
+fi
+if ! grep -F 'failure_reason:' <<<"$PREPARE_JOB" >/dev/null; then
+  printf 'prepare must publish a failure reason as a job output\n' >&2
+  exit 1
+fi
+if grep -F 'prepare-failure.txt' <<<"$PREPARE_JOB$FINALIZE_JOB" >/dev/null; then
+  printf 'prepare failure must not depend on a runner-local file\n' >&2
   exit 1
 fi
 if grep -F 'scripts/report-result' <<<"$PREPARE_JOB" >/dev/null; then
@@ -125,19 +142,44 @@ if grep -F 'scripts/report-result' <<<"$PREPARE_JOB" >/dev/null; then
   exit 1
 fi
 finalize_exchange=$(grep -n -F 'scripts/exchange-stage finalize' <<<"$FINALIZE_JOB" | head -n 1 | cut -d: -f1)
+finalize_restore=$(grep -n -F 'actions/download-artifact' <<<"$FINALIZE_JOB" | head -n 1 | cut -d: -f1)
+if [[ -z "$finalize_exchange" || -z "$finalize_restore" || "$finalize_exchange" -ge "$finalize_restore" ]]; then
+  printf 'finalize must exchange a credential before restoring any artifact\n' >&2
+  exit 1
+fi
+if ! grep -F 'needs.prepare.outputs.failure_reason' <<<"$FINALIZE_JOB" >/dev/null; then
+  printf 'prepare failure callback must use the prepare job output\n' >&2
+  exit 1
+fi
+if ! grep -F "needs.prepare.result == 'failure'" <<<"$FINALIZE_JOB" >/dev/null; then
+  printf 'finalize must report prepare failure with the finalize credential\n' >&2
+  exit 1
+fi
+if ! grep -F "needs.compile.result == 'cancelled'" <<<"$FINALIZE_JOB" >/dev/null \
+  || ! grep -F "needs.sign.result == 'cancelled'" <<<"$FINALIZE_JOB" >/dev/null; then
+  printf 'finalize must report compile or sign cancellation\n' >&2
+  exit 1
+fi
 if ! grep -F 'HAWK_CALLBACK_STAGE: finalize' <<<"$FINALIZE_JOB" >/dev/null; then
   printf 'finalize callbacks must name the finalize stage\n' >&2
   exit 1
 fi
 finalize_running=$(grep -n -F 'scripts/report-result running' <<<"$FINALIZE_JOB" | head -n 1 | cut -d: -f1)
 finalize_success=$(grep -n -F 'scripts/report-result succeeded' <<<"$FINALIZE_JOB" | head -n 1 | cut -d: -f1)
-finalize_failed=$(grep -n -F 'scripts/report-result failed' <<<"$FINALIZE_JOB" | head -n 1 | cut -d: -f1)
-if [[ -z "$finalize_exchange" || -z "$finalize_running" || -z "$finalize_success" || -z "$finalize_failed" ]]; then
+mapfile -t finalize_failures < <(grep -n -F 'scripts/report-result failed' <<<"$FINALIZE_JOB" | cut -d: -f1)
+if [[ -z "$finalize_exchange" || -z "$finalize_running" || -z "$finalize_success" || ${#finalize_failures[@]} -lt 3 ]]; then
   printf 'finalize must exchange a credential before running, success, and failure callbacks\n' >&2
   exit 1
 fi
-if [[ "$finalize_exchange" -ge "$finalize_running" || "$finalize_running" -ge "$finalize_success" || "$finalize_success" -ge "$finalize_failed" ]]; then
-  printf 'finalize callbacks must follow the finalize exchange\n' >&2
+finalize_prepare_failed=${finalize_failures[0]}
+finalize_cancel=${finalize_failures[1]}
+finalize_failed=${finalize_failures[2]}
+if [[ "$finalize_exchange" -ge "$finalize_prepare_failed" || "$finalize_prepare_failed" -ge "$finalize_cancel" || "$finalize_cancel" -ge "$finalize_restore" ]]; then
+  printf 'prepare failure and cancellation callbacks must follow the finalize exchange and precede artifact restore\n' >&2
+  exit 1
+fi
+if [[ "$finalize_restore" -ge "$finalize_running" || "$finalize_running" -ge "$finalize_success" || "$finalize_success" -ge "$finalize_failed" ]]; then
+  printf 'success-path callbacks must follow artifact restore and the finalize exchange\n' >&2
   exit 1
 fi
 if grep -F 'build-input-' <<<"$SIGN_JOB" >/dev/null; then
@@ -366,25 +408,18 @@ if "$ROOT/scripts/load-build-spec" 103:403 2>"$TMP_DIR/tampered.err"; then
 fi
 assert_file_contains "$TMP_DIR/tampered.err" "specHash does not match config"
 
-# Public rejection reports failed and never writes a running callback.
+# Public rejection reports failed without a spec env or a running callback.
+# Finalize writes only the platform run id before this callback.
 CURL_LOG="$TMP_DIR/curl-public.log"
 BUILDBOX_STATE_DIR="$TMP_DIR/state-public"
 GITHUB_OUTPUT="$TMP_DIR/github-output-public.log"
 export CURL_LOG BUILDBOX_STATE_DIR GITHUB_OUTPUT
 mkdir -p "$BUILDBOX_STATE_DIR"
-export MOCK_GIT_HEAD='1111111111111111111111111111111111111111'
 export BUILDBOX_RUN_ID=401
-"$ROOT/scripts/exchange-stage" prepare >/dev/null
-set -a
-# shellcheck disable=SC1090
-source "$GITHUB_ENV"
-set +a
-"$ROOT/scripts/load-build-spec" 101:401
-printf '%s\n' 'public repository cannot carry unsigned build artifacts' >"$BUILDBOX_STATE_DIR/prepare-failure.txt"
 use_finalize_credential
-"$ROOT/scripts/report-result" failed "$(head -n 1 "$BUILDBOX_STATE_DIR/prepare-failure.txt")"
-if [[ -e "$BUILDBOX_STATE_DIR/callback-running.json" ]]; then
-  printf 'public rejection must not report running\n' >&2
+"$ROOT/scripts/report-result" failed "public repository cannot carry unsigned build artifacts"
+if [[ -e "$BUILDBOX_STATE_DIR/callback-running.json" || -e "$BUILDBOX_STATE_DIR/spec.env" ]]; then
+  printf 'public rejection must not report running or require a spec env\n' >&2
   exit 1
 fi
 jq -e '
@@ -393,6 +428,24 @@ jq -e '
   .artifacts == [] and
   .errorCode == "BUILD_FAILED" and
   .errorMessage == "public repository cannot carry unsigned build artifacts"
+' "$BUILDBOX_STATE_DIR/callback-failed.json" >/dev/null
+
+# Cancellation uses the same artifact-free failed callback. Hawk has no cancelled status.
+CURL_LOG="$TMP_DIR/curl-cancel.log"
+BUILDBOX_STATE_DIR="$TMP_DIR/state-cancel"
+export CURL_LOG BUILDBOX_STATE_DIR
+mkdir -p "$BUILDBOX_STATE_DIR"
+export BUILDBOX_RUN_ID=401
+use_finalize_credential
+"$ROOT/scripts/report-result" failed "Buildbox workflow was cancelled in GitHub run $BUILDBOX_GITHUB_RUN_ID"
+if [[ -e "$BUILDBOX_STATE_DIR/spec.env" ]]; then
+  printf 'cancellation callback must not require a spec env\n' >&2
+  exit 1
+fi
+jq -e '
+  .status == "failed" and
+  .artifacts == [] and
+  .errorMessage == "Buildbox workflow was cancelled in GitHub run 987654321"
 ' "$BUILDBOX_STATE_DIR/callback-failed.json" >/dev/null
 
 # A platform run id reaches the same frozen Spec without a caller-supplied spec id.

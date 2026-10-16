@@ -30,6 +30,7 @@ jobs:
     outputs:
       checkout_repository: ${{ steps.spec.outputs.checkout_repository }}
       commit_sha: ${{ steps.spec.outputs.commit_sha }}
+      failure_reason: ${{ steps.failure.outputs.reason }}
     env:
       BUILDBOX_STATE_DIR: ${{ runner.temp }}/buildbox
       BUILDBOX_RUN_ID: ${{ inputs.build_run_id }}
@@ -51,14 +52,28 @@ jobs:
         run: scripts/load-build-spec "$BUILDBOX_RUN_ID"
 
       - name: Refuse public artifact transport
+        id: public-repository
         shell: bash
         run: |
           if [[ "${{ github.event.repository.private }}" != "true" ]]; then
-            mkdir -p "$BUILDBOX_STATE_DIR"
-            printf '%s\n' 'public repository cannot carry unsigned build artifacts' >"$BUILDBOX_STATE_DIR/prepare-failure.txt"
             printf 'public repository cannot carry unsigned build artifacts\n' >&2
             exit 1
           fi
+
+      # The reason is a job output. A later runner cannot read this job's temp directory.
+      - name: Record prepare failure
+        id: failure
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          if [[ "${{ steps.public-repository.outcome }}" == "failure" ]]; then
+            reason='public repository cannot carry unsigned build artifacts'
+          elif [[ "${{ steps.spec.outcome }}" == "failure" ]]; then
+            reason='prepare could not load the frozen build spec'
+          else
+            reason='prepare failed before compile'
+          fi
+          printf 'reason=%s\n' "$reason" >>"$GITHUB_OUTPUT"
 
       - name: Export compile inputs
         run: scripts/export-job-inputs compile ${{ runner.temp }}/compile-input
@@ -182,7 +197,9 @@ jobs:
           retention-days: 1
 
   finalize:
-    if: ${{ always() && needs.prepare.result == 'success' }}
+    # Prepare failure and compile/sign cancellation still need one terminal callback.
+    # Push events are excluded: prepare is skipped and there is no platform run id.
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && needs.prepare.result != 'skipped' }}
     needs: [prepare, compile, sign]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -197,7 +214,36 @@ jobs:
       - name: Checkout buildbox
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
 
+      # Exchange before any artifact restore. A missing artifact must not block the callback.
+      - name: Exchange finalize credential
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+        run: scripts/exchange-stage finalize
+
+      - name: Report prepare failure
+        if: ${{ needs.prepare.result == 'failure' }}
+        shell: bash
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_CALLBACK_STAGE: finalize
+        run: |
+          reason='${{ needs.prepare.outputs.failure_reason }}'
+          if [[ -z "$reason" ]]; then
+            reason='prepare failed before compile'
+          fi
+          scripts/report-result failed "$reason"
+
+      - name: Report cancellation
+        if: ${{ needs.prepare.result == 'success' && (needs.compile.result == 'cancelled' || needs.sign.result == 'cancelled') }}
+        shell: bash
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_CALLBACK_STAGE: finalize
+        run: scripts/report-result failed "Buildbox workflow was cancelled in GitHub run $BUILDBOX_GITHUB_RUN_ID"
+
       - name: Restore sign inputs
+        if: ${{ needs.prepare.result == 'success' && needs.compile.result == 'success' && needs.sign.result != 'cancelled' }}
         uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
         with:
           name: sign-input-${{ github.run_id }}
@@ -210,13 +256,8 @@ jobs:
           name: signed-output-${{ github.run_id }}
           path: ${{ runner.temp }}/buildbox
 
-      - name: Exchange finalize credential
-        env:
-          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
-        run: scripts/exchange-stage finalize
-
       - name: Report running
+        if: ${{ needs.prepare.result == 'success' && needs.compile.result != 'cancelled' && needs.sign.result != 'cancelled' }}
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
           HAWK_CALLBACK_STAGE: finalize
@@ -240,7 +281,7 @@ jobs:
         run: scripts/report-result succeeded
 
       - name: Report workflow failure
-        if: ${{ failure() || (needs.sign.result != 'success' && needs.compile.result != 'cancelled' && needs.sign.result != 'cancelled') }}
+        if: ${{ needs.prepare.result == 'success' && needs.compile.result != 'cancelled' && needs.sign.result != 'cancelled' && (failure() || needs.sign.result != 'success') }}
         shell: bash
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
@@ -248,10 +289,8 @@ jobs:
         run: |
           if [[ "${{ needs.sign.result }}" == "success" ]]; then
             scripts/report-result failed "Buildbox workflow failed in GitHub run $BUILDBOX_GITHUB_RUN_ID"
+          elif [[ "${{ needs.compile.result }}" != "success" ]]; then
+            scripts/report-result failed "compile failed before signing"
           else
-            reason='Buildbox workflow failed'
-            if [[ -f "$BUILDBOX_STATE_DIR/prepare-failure.txt" ]]; then
-              reason=$(head -n 1 "$BUILDBOX_STATE_DIR/prepare-failure.txt")
-            fi
-            scripts/report-result failed "$reason"
+            scripts/report-result failed "signing failed"
           fi
