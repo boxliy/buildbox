@@ -84,24 +84,6 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-      - name: Report running
-        if: success()
-        env:
-          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-        run: scripts/report-result running
-
-      - name: Report prepare failure
-        if: failure()
-        shell: bash
-        env:
-          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-        run: |
-          reason='Buildbox prepare failed'
-          if [[ -f "$BUILDBOX_STATE_DIR/prepare-failure.txt" ]]; then
-            reason=$(head -n 1 "$BUILDBOX_STATE_DIR/prepare-failure.txt")
-          fi
-          scripts/report-result failed "$reason"
-
   compile:
     needs: prepare
     runs-on: ubuntu-latest
@@ -234,6 +216,12 @@ jobs:
           HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
         run: scripts/exchange-stage finalize
 
+      - name: Report running
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_CALLBACK_STAGE: finalize
+        run: scripts/report-result running
+
       - name: Request upload authorization
         if: ${{ needs.sign.result == 'success' }}
         env:
@@ -248,11 +236,22 @@ jobs:
         if: ${{ needs.sign.result == 'success' }}
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_CALLBACK_STAGE: finalize
         run: scripts/report-result succeeded
 
       - name: Report workflow failure
-        if: ${{ needs.sign.result != 'success' || failure() }}
+        if: ${{ failure() || (needs.sign.result != 'success' && needs.compile.result != 'cancelled' && needs.sign.result != 'cancelled') }}
         shell: bash
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-        run: scripts/report-result failed "Buildbox workflow failed in GitHub run $BUILDBOX_GITHUB_RUN_ID"
+          HAWK_CALLBACK_STAGE: finalize
+        run: |
+          if [[ "${{ needs.sign.result }}" == "success" ]]; then
+            scripts/report-result failed "Buildbox workflow failed in GitHub run $BUILDBOX_GITHUB_RUN_ID"
+          else
+            reason='Buildbox workflow failed'
+            if [[ -f "$BUILDBOX_STATE_DIR/prepare-failure.txt" ]]; then
+              reason=$(head -n 1 "$BUILDBOX_STATE_DIR/prepare-failure.txt")
+            fi
+            scripts/report-result failed "$reason"
+          fi

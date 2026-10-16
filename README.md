@@ -68,11 +68,15 @@ Optional: `config.dartDefines`, `config.swanConfig`.
 
 Callbacks: `POST /api/v1/buildbox/runs/{runId}/callback` with the finalize
 stage credential, `status`, `githubRunId`, and `artifacts[]` on success.
+Prepare does not callback. Finalize exchanges its own credential, then reports
+`running`, and later `succeeded` or `failed`. A prepare credential is rejected.
 
 ## OIDC and short-lived credentials
 
 Prepare and finalize call `scripts/exchange-stage` before any Hawk read or
-callback. The workflow grants `id-token: write` only on those two jobs.
+callback. Exchange sends `runId` as a decimal string and writes the stage
+credential only to `GITHUB_ENV`. The workflow grants `id-token: write` only
+on those two jobs.
 Reusable workflow SHA pinning for the sign job remains unimplemented. A
 missing signing key still fails closed and is not a signed delivery.
 
@@ -89,8 +93,9 @@ tests/contract.sh
 - `sign-android` has no production signer. Missing material and a present
   material directory both fail. That failure is not a signed delivery.
 - Compile and sign artifacts omit presigned URLs. `prepare` rejects a public
-  repository before it reports `running`. That rejection reports `failed` from
-  the prepare job, so Hawk does not stay `running` when `finalize` is skipped.
+  repository before later jobs. Finalize then reports that failure with a
+  finalize credential, so Hawk does not stay `running` and prepare never
+  sends the callback.
   Unsigned outputs are not published as Actions artifacts until a private
   runner is available.
 - OIDC, reusable workflow SHA pins, and real keystore signing remain phase B.

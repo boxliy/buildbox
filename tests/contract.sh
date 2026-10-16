@@ -41,6 +41,19 @@ assert_file_not_contains() {
   fi
 }
 
+use_finalize_credential() {
+  "$ROOT/scripts/exchange-stage" finalize >/dev/null
+  set -a
+  # shellcheck disable=SC1090
+  source "$GITHUB_ENV"
+  set +a
+  export HAWK_CALLBACK_STAGE=finalize
+  [[ "${HAWK_STAGE_TOKEN:-}" == stage-finalize-* ]] || {
+    printf 'finalize exchange did not replace the stage token\n' >&2
+    exit 1
+  }
+}
+
 COMPILE_JOB=$(sed -n '/^  compile:/,/^  sign:/p' "$ROOT/.github/workflows/build.yml")
 if [[ -z "$COMPILE_JOB" ]]; then
   COMPILE_JOB=$(sed -n '/^  build:/,/^  finalize:/p' "$ROOT/.github/workflows/build.yml")
@@ -99,22 +112,32 @@ if ! grep -F 'public repository cannot carry unsigned build artifacts' <<<"$PREP
   exit 1
 fi
 prepare_public=$(grep -n -F 'public repository cannot carry unsigned build artifacts' <<<"$PREPARE_JOB" | head -n 1 | cut -d: -f1)
-prepare_running=$(grep -n -F 'scripts/report-result running' <<<"$PREPARE_JOB" | head -n 1 | cut -d: -f1)
-prepare_failed=$(grep -n -F 'scripts/report-result failed' <<<"$PREPARE_JOB" | head -n 1 | cut -d: -f1)
-if [[ -z "$prepare_public" || -z "$prepare_running" || -z "$prepare_failed" ]]; then
-  printf 'prepare must reject a public repository, report running, and report failed\n' >&2
-  exit 1
-fi
-if [[ "$prepare_public" -ge "$prepare_running" || "$prepare_running" -ge "$prepare_failed" ]]; then
-  printf 'prepare must reject a public repository before reporting running, and report failed only after that\n' >&2
-  exit 1
-fi
-if ! grep -F 'if: failure()' <<<"$PREPARE_JOB" >/dev/null; then
-  printf 'prepare must report failed when an earlier prepare step fails\n' >&2
+if [[ -z "$prepare_public" ]]; then
+  printf 'prepare must reject a public repository before later jobs\n' >&2
   exit 1
 fi
 if ! grep -F "needs.prepare.result == 'success'" <<<"$FINALIZE_JOB" >/dev/null; then
   printf 'finalize must stay gated on prepare success so it does not send a second callback\n' >&2
+  exit 1
+fi
+if grep -F 'scripts/report-result' <<<"$PREPARE_JOB" >/dev/null; then
+  printf 'prepare must not callback with the prepare credential\n' >&2
+  exit 1
+fi
+finalize_exchange=$(grep -n -F 'scripts/exchange-stage finalize' <<<"$FINALIZE_JOB" | head -n 1 | cut -d: -f1)
+if ! grep -F 'HAWK_CALLBACK_STAGE: finalize' <<<"$FINALIZE_JOB" >/dev/null; then
+  printf 'finalize callbacks must name the finalize stage\n' >&2
+  exit 1
+fi
+finalize_running=$(grep -n -F 'scripts/report-result running' <<<"$FINALIZE_JOB" | head -n 1 | cut -d: -f1)
+finalize_success=$(grep -n -F 'scripts/report-result succeeded' <<<"$FINALIZE_JOB" | head -n 1 | cut -d: -f1)
+finalize_failed=$(grep -n -F 'scripts/report-result failed' <<<"$FINALIZE_JOB" | head -n 1 | cut -d: -f1)
+if [[ -z "$finalize_exchange" || -z "$finalize_running" || -z "$finalize_success" || -z "$finalize_failed" ]]; then
+  printf 'finalize must exchange a credential before running, success, and failure callbacks\n' >&2
+  exit 1
+fi
+if [[ "$finalize_exchange" -ge "$finalize_running" || "$finalize_running" -ge "$finalize_success" || "$finalize_success" -ge "$finalize_failed" ]]; then
+  printf 'finalize callbacks must follow the finalize exchange\n' >&2
   exit 1
 fi
 if grep -F 'build-input-' <<<"$SIGN_JOB" >/dev/null; then
@@ -139,6 +162,7 @@ if jq -e 'has("uploads") and (.uploads | type == "array" and length > 0)' "$BUIL
   printf 'prepare spec response must not include uploads\n' >&2
   exit 1
 fi
+use_finalize_credential
 "$ROOT/scripts/report-result" running
 "$ROOT/scripts/export-job-inputs" compile "$TMP_DIR/compile-input"
 if [[ -e "$TMP_DIR/compile-input/uploads.json" || -e "$TMP_DIR/compile-input/spec-response.json" ]]; then
@@ -172,6 +196,7 @@ if [[ -e "$BUILDBOX_STATE_DIR/artifacts.json" || -e "$BUILDBOX_STATE_DIR/sign-pr
   printf 'failed signing must not write a success proof\n' >&2
   exit 1
 fi
+use_finalize_credential
 "$ROOT/scripts/report-result" failed "signing material is not configured"
 jq -e '
   .status == "failed" and
@@ -279,6 +304,7 @@ if "$ROOT/scripts/sign-android" 2>"$TMP_DIR/aab-sign.err"; then
   exit 1
 fi
 assert_file_contains "$TMP_DIR/aab-sign.err" "signing material is not configured"
+use_finalize_credential
 "$ROOT/scripts/report-result" failed "signing material is not configured"
 assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
 assert_file_contains "$FLUTTER_LOG" "SWAN_ANDROID_APPLICATION_ID=com.example.beta"
@@ -313,6 +339,7 @@ if "$ROOT/scripts/build-android" 2>"$TMP_DIR/mismatch.err"; then
   exit 1
 fi
 assert_file_contains "$TMP_DIR/mismatch.err" "does not match spec commit"
+use_finalize_credential
 "$ROOT/scripts/report-result" failed "commit mismatch"
 jq -e '
   .status == "failed" and
@@ -354,6 +381,7 @@ source "$GITHUB_ENV"
 set +a
 "$ROOT/scripts/load-build-spec" 101:401
 printf '%s\n' 'public repository cannot carry unsigned build artifacts' >"$BUILDBOX_STATE_DIR/prepare-failure.txt"
+use_finalize_credential
 "$ROOT/scripts/report-result" failed "$(head -n 1 "$BUILDBOX_STATE_DIR/prepare-failure.txt")"
 if [[ -e "$BUILDBOX_STATE_DIR/callback-running.json" ]]; then
   printf 'public rejection must not report running\n' >&2
@@ -386,5 +414,23 @@ if grep -F '/build-specs/' "$CURL_LOG" >/dev/null; then
   printf 'a platform run id must not call the spec-id endpoint\n' >&2
   exit 1
 fi
+
+# A numeric runId is rejected before Hawk issues a credential.
+jq -nc --arg oidcToken mock-oidc-token --argjson runId 401 --arg stage prepare \
+  '{oidcToken:$oidcToken,runId:$runId,stage:$stage}' >"$TMP_DIR/numeric-run.json"
+if curl --fail --silent --show-error --request POST --data-binary "@$TMP_DIR/numeric-run.json" \
+  "$HAWK_BASE_URL/api/v1/buildbox/auth/exchange" >/dev/null 2>"$TMP_DIR/numeric-run.err"; then
+  printf 'expected a numeric runId to be rejected\n' >&2
+  exit 1
+fi
+
+# A prepare credential cannot record a callback. Hawk checks the stage, not a token prefix.
+export HAWK_STAGE_TOKEN=stage-prepare-token
+export HAWK_CALLBACK_STAGE=prepare
+if "$ROOT/scripts/report-result" failed "prepare credential" >/dev/null 2>"$TMP_DIR/prepare-callback.err"; then
+  printf 'expected a prepare credential to be rejected for callback\n' >&2
+  exit 1
+fi
+assert_file_contains "$TMP_DIR/prepare-callback.err" "callback requires a finalize stage credential"
 
 printf 'contract tests passed\n'

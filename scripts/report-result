@@ -4,6 +4,7 @@ set +x
 
 usage() {
   printf 'usage: %s <running|succeeded|failed> [message]\n' "${0##*/}" >&2
+  printf 'HAWK_CALLBACK_STAGE must be finalize\n' >&2
 }
 
 die() {
@@ -26,6 +27,8 @@ esac
 
 [[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
 [[ -n "${HAWK_STAGE_TOKEN:-}" ]] || die 'HAWK_STAGE_TOKEN is required'
+# Hawk records a GitHub callback only for a finalize stage credential.
+[[ "${HAWK_CALLBACK_STAGE:-}" == "finalize" ]] || die 'callback requires a finalize stage credential'
 [[ -n "${BUILDBOX_GITHUB_RUN_ID:-}" ]] || die 'BUILDBOX_GITHUB_RUN_ID is required'
 [[ "$BUILDBOX_GITHUB_RUN_ID" =~ ^[0-9]+$ ]] || die 'BUILDBOX_GITHUB_RUN_ID must be an integer'
 

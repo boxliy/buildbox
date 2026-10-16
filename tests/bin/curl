@@ -26,6 +26,7 @@ output=
 method=GET
 url=
 data=
+authorization=
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output)
@@ -41,9 +42,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     --data-binary)
       data=$2
+      if [[ "$data" == @* ]]; then
+        data=$(cat "${data#@}")
+      fi
       shift 2
       ;;
     --header)
+      if [[ "$2" == Authorization:* ]]; then
+        authorization=${2#Authorization: }
+      fi
       shift 2
       ;;
     --fail | --silent | --show-error)
@@ -70,7 +77,8 @@ case "$method:$url" in
     ;;
   POST:*'/api/v1/buildbox/auth/exchange')
     stage=$(printf '%s' "$data" | jq -er '.stage')
-    run_id=$(printf '%s' "$data" | jq -er '.runId')
+    # Hawk Id accepts only a decimal string. A JSON number is the rejected client.
+    run_id=$(printf '%s' "$data" | jq -er '.runId | select(type == "string" and test("^[0-9]+$"))')
     oidc=$(printf '%s' "$data" | jq -er '.oidcToken')
     [[ "$oidc" == "mock-oidc-token" ]] || exit 1
     case "$stage" in
@@ -78,7 +86,7 @@ case "$method:$url" in
       finalize) token=stage-finalize-token ;;
       *) exit 1 ;;
     esac
-    write_body "$(jq -nc --arg token "$token" --arg stage "$stage" --argjson runId "$run_id" \
+    write_body "$(jq -nc --arg token "$token" --arg stage "$stage" --arg runId "$run_id" \
       '{token:$token,tokenType:"Bearer",expiresIn:300,stage:$stage,runId:$runId}')"
     ;;
   GET:*'/api/v1/buildbox/build-specs/101?run_id=401' | GET:*'/api/v1/buildbox/runs/401/spec')
@@ -117,6 +125,9 @@ case "$method:$url" in
   PUT:https://oss.example/*)
     ;;
   POST:*'/api/v1/buildbox/runs/'*'/callback')
+    # Hawk records GitHub callbacks only for a finalize stage credential.
+    [[ "$authorization" == "Bearer stage-finalize-"* || "$authorization" == "Bearer bb1."* ]] || exit 1
+    printf '%s' "$data" | jq -e '.githubRunId | type == "number" and . > 0' >/dev/null
     ;;
   *)
     printf 'unexpected curl call: %s %s\n' "$method" "$url" >&2

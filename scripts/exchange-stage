@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Exchange a GitHub Actions OIDC token for one attempt-scoped stage credential.
-# The shared service bearer is not accepted.
+# The shared service bearer is not accepted. The credential stays in
+# GITHUB_ENV and is never written to stdout, where Actions would log it.
 set -Eeuo pipefail
 set +x
 
@@ -29,6 +30,7 @@ esac
   || die 'GitHub Actions OIDC request is required'
 [[ -n "${BUILDBOX_RUN_ID:-}" ]] || die 'BUILDBOX_RUN_ID is required'
 [[ "$BUILDBOX_RUN_ID" =~ ^[0-9]+$ ]] || die 'BUILDBOX_RUN_ID must be a platform run id'
+[[ -n "${GITHUB_ENV:-}" ]] || die 'GITHUB_ENV is required'
 
 require_command curl
 require_command jq
@@ -41,9 +43,10 @@ OIDC_TOKEN=$(printf '%s' "$OIDC_RESPONSE" | jq -er '.value | select(type == "str
   || die 'GitHub did not return an OIDC token'
 
 BASE_URL=${HAWK_BASE_URL%/}
+# Hawk Id deserializes only from a decimal string, never from a JSON number.
 EXCHANGE_BODY=$(jq -nc \
   --arg oidcToken "$OIDC_TOKEN" \
-  --argjson runId "$BUILDBOX_RUN_ID" \
+  --arg runId "$BUILDBOX_RUN_ID" \
   --arg stage "$STAGE" \
   '{oidcToken: $oidcToken, runId: $runId, stage: $stage}')
 RESPONSE=$(curl --fail --silent --show-error \
@@ -57,11 +60,10 @@ TOKEN=$(printf '%s' "$RESPONSE" | jq -er '.token | select(type == "string" and l
 RETURNED_STAGE=$(printf '%s' "$RESPONSE" | jq -er '.stage')
 [[ "$RETURNED_STAGE" == "$STAGE" ]] || die 'stage credential does not match the requested stage'
 
-if [[ -n "${GITHUB_ENV:-}" ]]; then
-  if grep -q '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV"; then
-    grep -v '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV" >"$GITHUB_ENV.next"
-    mv "$GITHUB_ENV.next" "$GITHUB_ENV"
-  fi
-  printf 'HAWK_STAGE_TOKEN=%s\n' "$TOKEN" >>"$GITHUB_ENV"
+umask 077
+if grep -q '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV"; then
+  grep -v '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV" >"$GITHUB_ENV.next"
+  mv "$GITHUB_ENV.next" "$GITHUB_ENV"
 fi
-printf '%s\n' "$TOKEN"
+printf 'HAWK_STAGE_TOKEN=%s\n' "$TOKEN" >>"$GITHUB_ENV"
+printf 'exchanged %s credential for run %s\n' "$STAGE" "$BUILDBOX_RUN_ID"
