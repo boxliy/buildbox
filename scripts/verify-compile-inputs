@@ -10,3 +10,4 @@ actual=$(flutter --version --machine | jq -er '.frameworkVersion')
 [[ "$actual" == "$expected" ]] || { echo 'Flutter toolchain does not match frozen inputs' >&2; exit 1; }
 [[ -f "$source_root/waterfowl/pubspec.lock" ]] || { echo 'Workspace lockfile is missing' >&2; exit 1; }
 (cd "$source_root/waterfowl" && flutter pub get --enforce-lockfile)
+(cd "$source_root/waterfowl/apps/swan" && dart run tool/build_brand_assets.dart "$state/spec.json" "$source_root")

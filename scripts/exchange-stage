@@ -35,7 +35,8 @@ esac
 require_command curl
 require_command jq
 
-AUDIENCE=${HAWK_OIDC_AUDIENCE:-https://hawk.example/api/v1/buildbox/auth/exchange}
+[[ "$HAWK_BASE_URL" == https://* ]] || die 'Hawk requires HTTPS'
+AUDIENCE=$(printf '%s' "${HAWK_OIDC_AUDIENCE:?HAWK_OIDC_AUDIENCE is required}" | jq -sRr @uri)
 OIDC_RESPONSE=$(curl --fail --silent --show-error \
   --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
   "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}")
@@ -60,6 +61,8 @@ TOKEN=$(printf '%s' "$RESPONSE" | jq -er '.token | select(type == "string" and l
 RETURNED_STAGE=$(printf '%s' "$RESPONSE" | jq -er '.stage')
 [[ "$RETURNED_STAGE" == "$STAGE" ]] || die 'stage credential does not match the requested stage'
 
+# Mask dynamically minted credentials before later steps inherit GITHUB_ENV.
+printf '::add-mask::%s\n' "$TOKEN"
 umask 077
 if grep -q '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV"; then
   grep -v '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV" >"$GITHUB_ENV.next"

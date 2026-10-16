@@ -25,6 +25,13 @@ class IosSigningPolicyTests(unittest.TestCase):
                 sign_ios.validate_profile(dict(profile, **changes), metadata, b'fixture')
         with self.assertRaises(ValueError):
             sign_ios.validate_profile(profile, dict(metadata, distributionMethod='app-store'), b'fixture')
+        broad = dict(profile, Entitlements=dict(profile['Entitlements'], **{'aps-environment': 'production'}))
+        self.assertNotIn('aps-environment', sign_ios.validate_profile(broad, metadata, b'fixture'))
+        push = dict(metadata, deviceCapabilities=[{'key': 'notifications.push'}])
+        self.assertEqual(sign_ios.validate_profile(broad, push, b'fixture')['aps-environment'], 'production')
+        with self.assertRaises(ValueError):
+            sign_ios.validate_profile(profile, push, b'fixture')
+
 
     def test_unsigned_app_requires_device_identity_and_no_extensions(self):
         with tempfile.TemporaryDirectory() as directory:

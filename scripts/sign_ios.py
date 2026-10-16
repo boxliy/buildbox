@@ -33,7 +33,23 @@ def validate_profile(profile, metadata, certificate):
         raise ValueError('profile distribution mismatch')
     if any('*' in str(value) for value in entitlements.values()):
         raise ValueError('wildcard entitlements must be resolved before signing')
-    return entitlements
+    # Grant only the fixed App capability set, never every privilege in a profile.
+    requested = {
+        'application-identifier': expected,
+        'com.apple.developer.team-identifier': metadata['teamId'],
+        'get-task-allow': method == 'development',
+    }
+    capabilities = {item['key'] for item in metadata.get('deviceCapabilities', [])}
+    supported = {'camera.capture', 'microphone.record', 'location.foreground',
+                 'location.background', 'notifications.push', 'storage.photos.read',
+                 'storage.photos.write', 'biometrics.authenticate', 'background.execution'}
+    if not capabilities <= supported:
+        raise ValueError('unsupported iOS native capability')
+    if 'notifications.push' in capabilities:
+        requested['aps-environment'] = 'development' if method == 'development' else 'production'
+    if any(entitlements.get(key) != value for key, value in requested.items()):
+        raise ValueError('profile does not permit frozen entitlements')
+    return requested
 
 
 def validate_app(app, metadata):
@@ -76,6 +92,12 @@ def main():
                 if len(parts) < 2 or parts[0] != 'Payload' or not parts[1].endswith('.app'):
                     raise ValueError('unexpected archive layout')
             archive.extractall(product)
+            # zipfile intentionally ignores Unix modes; device executables need
+            # their validated executable bits restored before codesign.
+            for entry in archive.infolist():
+                extracted = product / entry.filename
+                if extracted.is_file():
+                    extracted.chmod(0o755 if (entry.external_attr >> 16) & 0o111 else 0o644)
         apps = list((product / 'Payload').iterdir())
         if len(apps) != 1 or not apps[0].is_dir():
             raise ValueError('exactly one device app required')
@@ -91,6 +113,9 @@ def main():
         match = re.search(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', pem, re.S)
         if not match:
             raise ValueError('missing signing certificate')
+        certificate_file = private / 'certificate.pem'
+        certificate_file.write_text(match.group())
+        run(['openssl', 'x509', '-in', str(certificate_file), '-checkend', '0', '-noout'])
         certificate = ssl.PEM_cert_to_DER_cert(match.group())
         if hashlib.sha256(certificate).hexdigest() != metadata['certificateSha256']:
             raise ValueError('certificate fingerprint mismatch')

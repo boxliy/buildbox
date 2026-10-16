@@ -7,6 +7,7 @@ TMP_DIR=$(mktemp -d)
 export PATH="$ROOT/tests/bin:$PATH"
 export FIXTURE_DIR="$ROOT/tests/fixtures"
 export HAWK_BASE_URL='https://hawk.example'
+export HAWK_OIDC_AUDIENCE='https://hawk.example/api/v1/buildbox/auth/exchange'
 export BUILDBOX_STATE_DIR="$TMP_DIR/state"
 export ACTIONS_ID_TOKEN_REQUEST_TOKEN='oidc-request-token'
 export ACTIONS_ID_TOKEN_REQUEST_URL='https://oidc.example/token?request=1'
@@ -79,7 +80,7 @@ if ! grep -F 'compile-input-' <<<"$COMPILE_JOB" >/dev/null; then
   printf 'compile job must restore the compile input slice\n' >&2
   exit 1
 fi
-PREPARE_JOB=$(sed -n '/^  prepare:/,/^  compile:/p' "$ROOT/.github/workflows/build.yml")
+PREPARE_JOB=$(cat "$ROOT/.github/workflows/prepare.yml"; sed -n '/^  prepare:/,/^  compile:/p' "$ROOT/.github/workflows/build.yml")
 if ! grep -F 'scripts/exchange-stage prepare' <<<"$PREPARE_JOB" >/dev/null; then
   printf 'prepare must exchange a stage credential before reading the spec\n' >&2
   exit 1
@@ -102,8 +103,8 @@ if ! grep -F '.github/workflows/build.yml' <<<"$PUSH_TRIGGER" >/dev/null; then
   printf 'push trigger must keep the workflow path filter\n' >&2
   exit 1
 fi
-SIGN_JOB=$(sed -n '/^  sign:/,/^  finalize:/p' "$ROOT/.github/workflows/build.yml")
-FINALIZE_JOB=$(sed -n '/^  finalize:/,$p' "$ROOT/.github/workflows/build.yml")
+SIGN_JOB=$(cat "$ROOT/.github/workflows/sign.yml")
+FINALIZE_JOB=$(sed -n '/^  finalize:/,$p' "$ROOT/.github/workflows/build.yml"; cat "$ROOT/.github/workflows/finalize.yml")
 if ! grep -F 'scripts/exchange-stage finalize' <<<"$FINALIZE_JOB" >/dev/null; then
   printf 'finalize must exchange its own stage credential\n' >&2
   exit 1
@@ -121,8 +122,8 @@ if [[ -z "$prepare_public" ]]; then
   printf 'prepare must reject a public repository before later jobs\n' >&2
   exit 1
 fi
-if grep -F "needs.prepare.result == 'success'" <<<"$FINALIZE_JOB" >/dev/null \
-  && grep -F 'if:' <<<"$FINALIZE_JOB" | head -n 1 | grep -F "needs.prepare.result == 'success'" >/dev/null; then
+if grep -F "inputs.prepare_result == 'success'" <<<"$FINALIZE_JOB" >/dev/null \
+  && grep -F 'if:' <<<"$FINALIZE_JOB" | head -n 1 | grep -F "inputs.prepare_result == 'success'" >/dev/null; then
   printf 'finalize job must run after prepare failure so Hawk receives one terminal callback\n' >&2
   exit 1
 fi
@@ -156,12 +157,12 @@ if ! grep -F 'needs.prepare.outputs.failure_reason' <<<"$FINALIZE_JOB" >/dev/nul
   printf 'prepare failure callback must use the prepare job output\n' >&2
   exit 1
 fi
-if ! grep -F "needs.prepare.result == 'failure'" <<<"$FINALIZE_JOB" >/dev/null; then
+if ! grep -F "inputs.prepare_result == 'failure'" <<<"$FINALIZE_JOB" >/dev/null; then
   printf 'finalize must report prepare failure with the finalize credential\n' >&2
   exit 1
 fi
-if ! grep -F "needs.compile.result == 'cancelled'" <<<"$FINALIZE_JOB" >/dev/null \
-  || ! grep -F "needs.sign.result == 'cancelled'" <<<"$FINALIZE_JOB" >/dev/null; then
+if ! grep -F "inputs.compile_result == 'cancelled'" <<<"$FINALIZE_JOB" >/dev/null \
+  || ! grep -F "inputs.sign_result == 'cancelled'" <<<"$FINALIZE_JOB" >/dev/null; then
   printf 'finalize must report compile or sign cancellation\n' >&2
   exit 1
 fi
@@ -191,7 +192,7 @@ if grep -F 'build-input-' <<<"$SIGN_JOB" >/dev/null; then
   printf 'sign job must not download the full prepare artifact\n' >&2
   exit 1
 fi
-if ! grep -F 'needs.sign.result == '"'"'success'"'" <<<"$FINALIZE_JOB" >/dev/null; then
+if ! grep -F 'inputs.sign_result == '"'"'success'"'" <<<"$FINALIZE_JOB" >/dev/null; then
   printf 'finalize success path must require the sign job\n' >&2
   exit 1
 fi
@@ -232,7 +233,11 @@ BUILDBOX_STATE_DIR="$TMP_DIR/compile-state"
 export BUILDBOX_STATE_DIR
 mkdir -p "$BUILDBOX_STATE_DIR"
 cp -a "$TMP_DIR/compile-input/." "$BUILDBOX_STATE_DIR/"
-"$ROOT/scripts/build-android"
+if "$ROOT/scripts/build-android" 2>"$TMP_DIR/compile-credential.err"; then
+  echo 'compile accepted a stage credential' >&2; exit 1
+fi
+assert_file_contains "$TMP_DIR/compile-credential.err" 'compile runner must not carry stage credentials'
+env -u HAWK_STAGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN "$ROOT/scripts/build-android"
 assert_file_contains "$FLUTTER_LOG" "SWAN_ARTIFACT_KIND=unsigned_release"
 if "$ROOT/scripts/sign-android" 2>"$TMP_DIR/unsigned.err"; then
   printf 'expected unsigned artifacts without signing material to fail\n' >&2
@@ -266,20 +271,20 @@ unset BUILDBOX_SIGNING_MATERIAL_DIR
 FLUTTER_OUTPUT_KIND=debug
 export FLUTTER_OUTPUT_KIND
 : >"$FLUTTER_LOG"
-if "$ROOT/scripts/build-android" 2>"$TMP_DIR/debug.err"; then
+if env -u HAWK_STAGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN "$ROOT/scripts/build-android" 2>"$TMP_DIR/debug.err"; then
   printf 'expected debug-signed compile output to fail\n' >&2
   exit 1
 fi
 assert_file_contains "$TMP_DIR/debug.err" "refusing debug-signed compile output"
 FLUTTER_OUTPUT_KIND=signed
-if "$ROOT/scripts/build-android" 2>"$TMP_DIR/signed.err"; then
+if env -u HAWK_STAGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN "$ROOT/scripts/build-android" 2>"$TMP_DIR/signed.err"; then
   printf 'expected already-signed compile output to fail\n' >&2
   exit 1
 fi
 assert_file_contains "$TMP_DIR/signed.err" "refusing already-signed compile output"
 unset FLUTTER_OUTPUT_KIND
 : >"$FLUTTER_LOG"
-"$ROOT/scripts/build-android"
+env -u HAWK_STAGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN "$ROOT/scripts/build-android"
 
 STATE_DIR=$BUILDBOX_STATE_DIR
 export STATE_DIR
@@ -345,7 +350,7 @@ set +a
 rm -rf "$BUILDBOX_STATE_DIR"
 mkdir -p "$BUILDBOX_STATE_DIR"
 cp -a "$TMP_DIR/compile-input-aab/." "$BUILDBOX_STATE_DIR/"
-"$ROOT/scripts/build-android"
+env -u HAWK_STAGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN "$ROOT/scripts/build-android"
 if "$ROOT/scripts/sign-android" 2>"$TMP_DIR/aab-sign.err"; then
   printf 'expected aab unsigned signing to fail\n' >&2
   exit 1
@@ -381,7 +386,7 @@ set +a
 rm -rf "$BUILDBOX_STATE_DIR"
 mkdir -p "$BUILDBOX_STATE_DIR"
 cp -a "$TMP_DIR/compile-input-mismatch/." "$BUILDBOX_STATE_DIR/"
-if "$ROOT/scripts/build-android" 2>"$TMP_DIR/mismatch.err"; then
+if env -u HAWK_STAGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN "$ROOT/scripts/build-android" 2>"$TMP_DIR/mismatch.err"; then
   printf 'expected commit mismatch to fail\n' >&2
   exit 1
 fi

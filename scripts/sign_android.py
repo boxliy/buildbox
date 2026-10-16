@@ -103,6 +103,10 @@ def sign_one(source, destination, target, metadata, material, private):
     expected = metadata["certificateSha256"].lower()
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise ValueError("invalid expected certificate")
+    certificate = private / "certificate.pem"
+    certificate.write_text(run(["keytool", "-exportcert", "-rfc", "-keystore", str(keystore),
+        "-storepass:env", "SIGN_STORE_PASSWORD", "-alias", material["alias"]], env))
+    run(["openssl", "x509", "-in", str(certificate), "-checkend", "0", "-noout"])
     if target == "apk":
         aligned = private / "aligned.apk"
         run(["zipalign", "-p", "-f", "4", str(source), str(aligned)])

@@ -38,11 +38,34 @@ cd "$source_root/waterfowl/apps/swan"
 # Source build phases run only here, before any signing material is available.
 flutter build ios --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "${args[@]}"
 # Plist mutation is data-only and occurs before isolated signing.
-python3 - "$name" <<'PYNAME'
+python3 - "$name" "$state/spec.json" <<'PYNAME'
 from pathlib import Path
-import plistlib, sys
+import json, plistlib, sys
+spec=json.loads(Path(sys.argv[2]).read_text())
+capabilities={item['key'] for item in spec['config']['appProfile'].get('deviceCapabilities', [])}
+usage={
+ 'camera.capture': ('NSCameraUsageDescription', 'camera'),
+ 'microphone.record': ('NSMicrophoneUsageDescription', 'microphone'),
+ 'location.foreground': ('NSLocationWhenInUseUsageDescription', 'location'),
+ 'location.background': ('NSLocationAlwaysAndWhenInUseUsageDescription', 'background location'),
+ 'storage.photos.read': ('NSPhotoLibraryUsageDescription', 'photo library'),
+ 'storage.photos.write': ('NSPhotoLibraryAddUsageDescription', 'photo library'),
+ 'biometrics.authenticate': ('NSFaceIDUsageDescription', 'biometric authentication'),
+}
+if not capabilities <= set(usage) | {'notifications.push', 'background.execution'}:
+    raise SystemExit('unsupported iOS native capability')
 for info in Path('build/ios/iphoneos').glob('*.app/Info.plist'):
     body=plistlib.loads(info.read_bytes());body['CFBundleDisplayName']=sys.argv[1]
+    for capability, (key, purpose) in usage.items():
+        if capability in capabilities:
+            body[key] = sys.argv[1] + ' uses ' + purpose + ' for enabled app features.'
+    if 'location.background' in capabilities:
+        body['NSLocationWhenInUseUsageDescription'] = sys.argv[1] + ' uses location for enabled app features.'
+    modes=[]
+    if 'location.background' in capabilities: modes.append('location')
+    if 'notifications.push' in capabilities: modes.append('remote-notification')
+    if 'background.execution' in capabilities: modes.append('fetch')
+    body['UIBackgroundModes']=modes
     info.write_bytes(plistlib.dumps(body))
 PYNAME
 mkdir -p "$state/unsigned"

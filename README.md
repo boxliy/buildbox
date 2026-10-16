@@ -1,106 +1,98 @@
-# buildbox
+# Aviary buildbox
 
-Buildbox contains the GitHub Actions runner contract for immutable Hawk
-Build Spec v1 attempts. Phase A focuses on Swan Android artifacts (`apk`, `aab`)
-with compile/sign runner separation; `ipa` is accepted in the contract loader
-for forward alignment with Hawk but is not compiled in this repository yet.
+Buildbox executes immutable Build Spec v1 attempts dispatched by Hawk. The only
+workflow input is `build_run_id`. A GitHub success alone never authorizes a download.
 
-## Android workflow
+## Execution and trust
 
-Run `.github/workflows/build.yml` manually with one input. A push that only
-changes this workflow file is skipped and does not start a product build.
-GitHub otherwise records that push as a failed run with zero jobs:
+The caller workflow pins prepare, sign and finalize reusable workflows to full
+commit SHAs. Each reusable workflow checks out its own trusted script SHA. Update
+Hawk's approved caller and reusable workflow SHA allowlists before dispatching a
+new revision. GitHub's repository and owner **numeric IDs**, workflow path, ref,
+approved SHA, dispatch event, run ID and first run attempt must all match.
+Direct GitHub reruns cannot claim a fresh attempt; retry from Release instead.
 
-- `build_run_id`: Hawk platform workflow run id for one immutable attempt
+| Stage | Authority | Work |
+| --- | --- | --- |
+| prepare | OIDC → short prepare credential | Read the frozen Spec; obtain exact source with a repository-scoped GitHub App token |
+| compile | No OIDC, Hawk, storage or signing credential | Validate inputs, generate Swan assets, compile unsigned APK/AAB or device app |
+| sign | OIDC → short sign credential | Retrieve the fixed signing version; verify identity/version; sign and attest exact bytes |
+| finalize | OIDC → short finalize credential | Request target-specific PUT authorization, upload, report receipt |
 
-No repository, commit, upload URL, token, or business configuration is accepted
-as workflow input. Runtime authority comes from these repository secrets:
+Runners and workspaces are separate; compile caches are not shared with signing.
+Source checkout uses `persist-credentials: false`. No application-provided script
+runs in the signing job. Credentials, keystores, profiles and presigned URLs are
+never job artifacts. Prepare refuses **public repository artifact transport** before
+source retrieval. This repository's public visibility therefore requires an
+approved private execution/transport configuration before real builds can run;
+private runners alone do not make public Actions artifacts private.
 
-- `HAWK_BASE_URL`
-- `HAWK_OIDC_AUDIENCE`: audience Hawk expects on the Actions OIDC token
-- `AVIARY_SOURCE_TOKEN`: read-only access to the private Aviary repository
+Required operator configuration (do not add secret values to this repository):
 
-Prepare and finalize exchange a short-lived stage credential with
-`POST /api/v1/buildbox/auth/exchange`. The shared `HAWK_BUILDBOX_TOKEN` is not
-a substitute and is not sent. Compile and sign have no platform credential.
+- Secrets `HAWK_BASE_URL`, `HAWK_OIDC_AUDIENCE`.
+- Variable `AVIARY_SOURCE_REPOSITORY`, variable `AVIARY_SOURCE_APP_ID`, secret
+  `AVIARY_SOURCE_APP_PRIVATE_KEY`: a GitHub App restricted to read-only contents
+  of the approved source repository and any explicitly authorized dependencies.
+- Hawk dispatch credentials, numeric repository identity and approved workflow
+  SHA configuration; OIDC stage signing secret and fixed GitHub issuer/JWKS trust.
+- App packaging inputs, an active fixed signing version and published storage
+  binding in Hawk. Missing configuration fails closed.
 
-Jobs run on separate runners:
+## Immutable inputs
 
-| Job | Platform credential | Role |
-|-----|--------------------|------|
-| `prepare` | prepare stage | Exchange OIDC, load spec without uploads, reject a public repository |
-| `compile` | none | Checkout Aviary at `commitSha`, build `unsigned_release` outputs |
-| `sign` | none | Isolated signing step; fails closed without a real signer |
-| `finalize` | finalize stage | Report `running` after prepare, then upload or report one terminal status |
+Targets are exactly `apk`, `aab`, `ipa`; aliases are rejected. Android supports APK
+and AAB together; iOS supports IPA only. The hash is the shared v1 canonical JSON
+SHA-256 of `config`, excluding `artifactPrefix`. Duplicate keys, floating point
+numbers in the outer Spec, unknown schema versions and noncanonical targets fail.
+The Rust/script identity vector is `tests/fixtures/build_spec_v1_identity.json`.
+Release payloads are canonical JSON strings inside the Spec to preserve their
+signed bytes, including UI numeric values.
 
-The compile job never receives `HAWK_BUILDBOX_TOKEN`, signing material, the
-Hawk response body, or presigned upload URLs. `prepare` exports a compile
-slice (`spec` without `uploads`, targets, dart defines, swan config) and a
-sign slice (run id, spec hash, targets). Unsigned artifacts move to `sign`
-as their own artifact. `build-android` rejects debug-signed and already-signed
-zip outputs. `sign-android` rejects those same states and exits non-zero when
-signing material is absent or when no production signer is implemented.
-Phase A does not copy unsigned bytes forward or report `succeeded`.
-A missing keystore is a failed build. The workflow does not fall back to
-debug signing or publish the unsigned APK as a downloadable artifact.
+The Swan adapter validates exact source SHA, `.fvmrc`, lockfile, resource digests,
+App/tenant scope and signed bundled Release before writing generated assets.
+Compile enforces the Flutter version and workspace lockfile. Brand inputs require
+`icon.png` (square PNG, at least 1024 pixels) and `launch.png`, with fixed digests
+and an App background color. The adapter installs signed App-scoped manifest,
+theme and FTL resources; the branding tool generates native icons/launch images.
+Android permissions and iOS usage descriptions derive from the fixed capabilities;
+unsupported capabilities fail rather than silently using default Swan branding.
 
-## Spec v1 targets and object keys
+## Signing and artifacts
 
-Canonical Hawk target names are `apk`, `aab`, and `ipa`. `load-build-spec`
-canonicalizes legacy `android_apk` / `android_aab` in API responses when
-present. Object keys use `{artifactPrefix}{target}.{ext}` (for example
-`builds/.../apk.apk`, `builds/.../aab.aab`).
+APK uses `zipalign` and `apksigner`, verifies certificate, package and version.
+AAB uses the checksum-pinned bundletool to inspect identity, then JAR signing and
+strict verification. An upload key is not a claim of Play app-signing identity or
+store readiness. iOS requires the frozen Xcode build on macOS, a device product,
+matching team/bundle/certificate/profile and unexpired device-scoped development
+or ad-hoc provisioning. Extensions, wildcard profiles and store/enterprise routes
+are rejected. Sign runs codesign on native code and packages the IPA without
+running source build phases. Entitlements are restricted to frozen capabilities,
+not copied wholesale from the provisioning profile. No store upload is performed.
 
-`specHash` is `sha256:` + hex(SHA-256(JCS-sorted compact JSON of `config`)).
-The loader recomputes and rejects mismatches.
+The sign stage records proof bound to attempt, target, signing version, certificate,
+size and SHA-256. Finalize cannot invent that proof. Hawk creates the upload key
+and independently copies/hashes the object under a lease-specific protected key.
+Only verified, still-authorized artifacts receive an authenticated download URL.
+Signing revocation/cancellation prevents new signing, uploads and downloads.
 
-## Hawk response contract
+Finalize exchanges its credential before restoring artifacts, so prepare failure,
+cancellation and missing output can still report failure. A terminal finalize
+refresh permits identical receipts only, not another upload. Hard cancellation
+can prevent `always()` execution; Hawk's leased reconciliation handles lost
+callbacks and external run outcomes. Successful Actions without trusted artifacts
+never become downloadable.
 
-`scripts/load-build-spec` requires:
-
-- `sourceRepo`, `commitSha`, `targets`, `runId`, `config`, `specHash`, `artifactPrefix`
-- `config.androidApplicationId`, `config.appDisplayName`
-
-The prepare response has no `uploads`. Finalize requests each target with
-`POST /api/v1/buildbox/runs/{runId}/artifact-uploads` after signing.
-
-Optional: `config.dartDefines`, `config.swanConfig`.
-
-Callbacks: `POST /api/v1/buildbox/runs/{runId}/callback` with the finalize
-stage credential, `status`, `githubRunId`, and `artifacts[]` on success.
-Prepare does not callback. Finalize exchanges its credential before restoring
-any artifact. Prepare failure, including the public-repository refusal, and
-compile or sign cancellation each send one `failed` callback. That path does
-not read a job artifact. After a successful prepare that was not cancelled,
-finalize reports `running`, then `succeeded` or `failed`. A prepare credential
-is rejected. Hawk has no `cancelled` status, so cancellation is `failed`.
-
-## OIDC and short-lived credentials
-
-Prepare and finalize call `scripts/exchange-stage` before any Hawk read or
-callback. Exchange sends `runId` as a decimal string and writes the stage
-credential only to `GITHUB_ENV`. The workflow grants `id-token: write` only
-on those two jobs.
-Reusable workflow SHA pinning for the sign job remains unimplemented. A
-missing signing key still fails closed and is not a signed delivery.
-
-## Local contract tests
-
-Fixtures and mock `curl` / `flutter` / `git` only:
+## Checks and acceptance limits
 
 ```sh
-tests/contract.sh
+bash tests/contract.sh
+python3 -m unittest discover -s tests -p 'test_*.py'
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/{build,prepare,sign,finalize}.yml
 ```
 
-## Phase A limitations
-
-- `sign-android` has no production signer. Missing material and a present
-  material directory both fail. That failure is not a signed delivery.
-- Compile and sign artifacts omit presigned URLs. `prepare` rejects a public
-  repository before later jobs and publishes the reason as a job output.
-  Finalize reports that failure, and a cancelled compile or sign, with a
-  finalize credential. The failure callback does not restore an artifact.
-  Prepare never sends the callback.
-  Unsigned outputs are not published as Actions artifacts until a private
-  runner is available.
-- OIDC, reusable workflow SHA pins, and real keystore signing remain phase B.
+Contract tests use isolated HTTP/tool fixtures. Python tests cover real JAR
+signature verification, archive rejection, iOS policy, canonical hashes and
+cross-job failure/cancellation branches. They do not prove an Android SDK or
+macOS signing run. Real Actions execution, signing material, storage, devices,
+installation and upgrade acceptance are deferred until business configuration
+is supplied. Unsigned, fixture and simulator results are not signed delivery.
