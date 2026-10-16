@@ -34,13 +34,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 5d07397fc365af21ac5f1a918a5dd3c6c68bcd64
+          ref: 41df80c67e119a89d71779782c93cea77aab5153
           persist-credentials: false
-
-      - name: Exchange sign credential
-        env:
-          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
-        run: scripts/exchange-stage sign
 
       - name: Setup signing Java
         if: inputs.platform == 'android'
@@ -69,6 +64,11 @@ jobs:
         with:
           name: unsigned-output-${{ github.run_id }}
           path: ${{ runner.temp }}/buildbox
+
+      - name: Exchange sign credential
+        env:
+          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+        run: scripts/exchange-stage sign
 
       - name: Sign fixed artifacts
         env:

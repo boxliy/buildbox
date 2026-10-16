@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 5d07397fc365af21ac5f1a918a5dd3c6c68bcd64
+          ref: 41df80c67e119a89d71779782c93cea77aab5153
           persist-credentials: false
 
       # Exchange before any artifact restore. A missing artifact must not block the callback.
@@ -67,7 +67,7 @@ jobs:
           scripts/report-result failed "$reason"
 
       - name: Report cancellation
-        if: ${{ inputs.prepare_result == 'success' && (inputs.compile_result == 'cancelled' || inputs.sign_result == 'cancelled') }}
+        if: ${{ inputs.prepare_result == 'cancelled' || (inputs.prepare_result == 'success' && (inputs.compile_result == 'cancelled' || inputs.sign_result == 'cancelled')) }}
         shell: bash
         env:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
@@ -104,6 +104,13 @@ jobs:
       - name: Upload signed artifacts
         if: ${{ inputs.sign_result == 'success' }}
         run: scripts/upload-oss
+
+      - name: Refresh finalize receipt credential after upload
+        if: ${{ inputs.sign_result == 'success' }}
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+        run: scripts/exchange-stage finalize
 
       - name: Report success
         if: ${{ inputs.sign_result == 'success' }}

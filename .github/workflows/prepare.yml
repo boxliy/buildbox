@@ -13,6 +13,8 @@ on:
       AVIARY_SOURCE_APP_PRIVATE_KEY:
         required: true
     outputs:
+      flutter_version:
+        value: ${{ jobs.prepare.outputs.flutter_version }}
       platform:
         value: ${{ jobs.prepare.outputs.platform }}
       failure_reason:
@@ -30,6 +32,7 @@ jobs:
     outputs:
       checkout_repository: ${{ steps.spec.outputs.checkout_repository }}
       commit_sha: ${{ steps.spec.outputs.commit_sha }}
+      flutter_version: ${{ steps.platform.outputs.flutter_version }}
       platform: ${{ steps.platform.outputs.platform }}
       failure_reason: ${{ steps.failure.outputs.reason }}
     env:
@@ -42,7 +45,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 5d07397fc365af21ac5f1a918a5dd3c6c68bcd64
+          ref: 41df80c67e119a89d71779782c93cea77aab5153
           persist-credentials: false
 
       - name: Exchange prepare credential
@@ -75,6 +78,8 @@ jobs:
           test -n "$ALLOWED_SOURCE" && test "$SOURCE" = "$ALLOWED_SOURCE"
           platform=$(jq -er '.config.platform | select(. == "android" or . == "ios")' "$BUILDBOX_STATE_DIR/spec.json")
           echo "platform=$platform" >>"$GITHUB_OUTPUT"
+          flutter_version=$(jq -er '.config.frozenInputs.flutterVersion | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$BUILDBOX_STATE_DIR/spec.json")
+          echo "flutter_version=$flutter_version" >>"$GITHUB_OUTPUT"
           echo "owner=${SOURCE%%/*}" >>"$GITHUB_OUTPUT"
           echo "repository=${SOURCE#*/}" >>"$GITHUB_OUTPUT"
 
@@ -98,11 +103,14 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
+      - name: Preserve source permissions and Git object identity
+        run: tar -cf "$RUNNER_TEMP/source.tar" -C "$GITHUB_WORKSPACE" aviary-source
+
       - name: Preserve source in private artifact transport
         uses: actions/upload-artifact@50769540e7f4bd7f9d42d1b79bccb20935c6c3aa
         with:
           name: source-${{ github.run_id }}
-          path: aviary-source
+          path: ${{ runner.temp }}/source.tar
           include-hidden-files: true
           retention-days: 1
           if-no-files-found: error
@@ -130,6 +138,14 @@ jobs:
           include-hidden-files: true
           retention-days: 1
           if-no-files-found: error
+
+      - name: Record immutable input handoff
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+        run: |
+          curl --fail --silent --show-error --request POST \
+            --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
+            "${HAWK_BASE_URL%/}/api/v1/buildbox/runs/$BUILDBOX_RUN_ID/prepare-complete"
 
       # The reason is a job output. A later runner cannot read this job's temp directory.
       - name: Record prepare failure
