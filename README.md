@@ -7,7 +7,9 @@ for forward alignment with Hawk but is not compiled in this repository yet.
 
 ## Android workflow
 
-Run `.github/workflows/build.yml` manually with one input:
+Run `.github/workflows/build.yml` manually with one input. A push that only
+changes this workflow file is skipped and does not start a product build.
+GitHub otherwise records that push as a failed run with zero jobs:
 
 - `build_spec_id`: Hawk-issued `<spec_id>:<run_id>` identity for one immutable attempt
 
