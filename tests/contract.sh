@@ -21,6 +21,11 @@ printf '%s\n' 'UNCHANGED=1' >"$GITHUB_ENV"
 
 mkdir -p "$GITHUB_WORKSPACE/aviary-source/.git"
 mkdir -p "$GITHUB_WORKSPACE/aviary-source/waterfowl/apps/swan"
+# The adapter has its own real digest/signature tests in Aviary. This suite
+# substitutes its source executable to exercise buildbox's invocation boundary.
+mkdir -p "$GITHUB_WORKSPACE/aviary-source/waterfowl/tools"
+printf '%s\n' 'import sys; assert sys.argv[1] == "--spec" and sys.argv[3] == "--source"' >"$GITHUB_WORKSPACE/aviary-source/waterfowl/tools/build_spec_adapter.py"
+printf '%s\n' 'fixture' >"$GITHUB_WORKSPACE/aviary-source/waterfowl/pubspec.lock"
 mkdir -p "$BUILDBOX_STATE_DIR"
 
 assert_file_contains() {
@@ -233,7 +238,7 @@ if "$ROOT/scripts/sign-android" 2>"$TMP_DIR/unsigned.err"; then
   printf 'expected unsigned artifacts without signing material to fail\n' >&2
   exit 1
 fi
-assert_file_contains "$TMP_DIR/unsigned.err" "signing material is not configured"
+assert_file_contains "$TMP_DIR/unsigned.err" "signing failed; no signed delivery was authorized"
 if [[ -e "$BUILDBOX_STATE_DIR/artifacts.json" || -e "$BUILDBOX_STATE_DIR/sign-proof.json" ]]; then
   printf 'failed signing must not write a success proof\n' >&2
   exit 1
@@ -254,7 +259,7 @@ if "$ROOT/scripts/sign-android" 2>"$TMP_DIR/material.err"; then
   printf 'expected present signing material to fail closed in phase A\n' >&2
   exit 1
 fi
-assert_file_contains "$TMP_DIR/material.err" "production signing is not implemented"
+assert_file_contains "$TMP_DIR/material.err" "signing failed; no signed delivery was authorized"
 unset BUILDBOX_SIGNING_MATERIAL_DIR
 
 # Debug and already-signed compile outputs are refused before any copy.
@@ -281,16 +286,16 @@ export STATE_DIR
 # shellcheck disable=SC1090
 source "$BUILDBOX_STATE_DIR/spec.env"
 
-[[ "$BUILDBOX_TARGETS" == "apk,aab" ]]
+[[ "$BUILDBOX_TARGETS" == "aab,apk" ]]
 [[ "$BUILDBOX_CHECKOUT_REPOSITORY" == "boxliy/aviary" ]]
 [[ "$(jq 'length' "$BUILDBOX_STATE_DIR/unsigned-manifest.json")" == "2" ]]
 [[ ! -e "$BUILDBOX_STATE_DIR/artifacts.json" ]]
 assert_file_contains "$GITHUB_OUTPUT" "checkout_repository=boxliy/aviary"
 assert_file_contains "$GITHUB_OUTPUT" "commit_sha=1111111111111111111111111111111111111111"
-assert_file_contains "$GITHUB_OUTPUT" "targets=apk,aab"
+assert_file_contains "$GITHUB_OUTPUT" "targets=aab,apk"
 grep -q '^UNCHANGED=1$' "$GITHUB_ENV"
 grep -q '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV"
-assert_file_contains "$FLUTTER_LOG" "build apk --release"
+assert_file_contains "$FLUTTER_LOG" "build apk --release --no-pub --build-name=1.2.3 --build-number=7"
 assert_file_contains "$FLUTTER_LOG" "build appbundle --release"
 assert_file_contains "$FLUTTER_LOG" "SWAN_ANDROID_APPLICATION_ID=com.example_alpha"
 assert_file_contains "$FLUTTER_LOG" "SWAN_APP_DISPLAY_NAME=Alpha\\ App"
@@ -345,7 +350,7 @@ if "$ROOT/scripts/sign-android" 2>"$TMP_DIR/aab-sign.err"; then
   printf 'expected aab unsigned signing to fail\n' >&2
   exit 1
 fi
-assert_file_contains "$TMP_DIR/aab-sign.err" "signing material is not configured"
+assert_file_contains "$TMP_DIR/aab-sign.err" "signing failed; no signed delivery was authorized"
 use_finalize_credential
 "$ROOT/scripts/report-result" failed "signing material is not configured"
 assert_file_contains "$FLUTTER_LOG" "build appbundle --release"

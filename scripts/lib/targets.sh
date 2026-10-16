@@ -1,27 +1,21 @@
 #!/usr/bin/env bash
 # Shared Spec v1 target naming for buildbox scripts.
-# Canonical Hawk targets: apk, aab, ipa. Legacy android_apk/android_aab are accepted at load time.
+# Canonical Hawk targets: apk, aab, ipa. No legacy aliases are accepted.
 
 targets_canonicalize_json() {
   jq -cer '
     . as $targets |
     select(type == "array" and length >= 1 and length <= 2) |
-    map(
-      if . == "android_apk" then "apk"
-      elif . == "android_aab" then "aab"
-      else .
-      end
-    ) |
     select(all(.[]; . == "apk" or . == "aab" or . == "ipa")) |
-    select((unique | length) == length)
+    select(. == (sort | unique)) | select((index("ipa") == null) or length == 1)
   '
 }
 
 target_extension() {
   local target=$1
   case "$target" in
-    apk | android_apk) printf '%s' 'apk' ;;
-    aab | android_aab) printf '%s' 'aab' ;;
+    apk) printf '%s' 'apk' ;;
+    aab) printf '%s' 'aab' ;;
     ipa) printf '%s' 'ipa' ;;
     *) return 1 ;;
   esac
@@ -30,8 +24,8 @@ target_extension() {
 target_content_type() {
   local target=$1
   case "$target" in
-    apk | android_apk) printf '%s' 'application/vnd.android.package-archive' ;;
-    aab | android_aab | ipa) printf '%s' 'application/octet-stream' ;;
+    apk) printf '%s' 'application/vnd.android.package-archive' ;;
+    aab | ipa) printf '%s' 'application/octet-stream' ;;
     *) return 1 ;;
   esac
 }
@@ -39,8 +33,8 @@ target_content_type() {
 target_artifact_basename() {
   local target=$1
   case "$target" in
-    apk | android_apk) printf '%s' 'swan-release.apk' ;;
-    aab | android_aab) printf '%s' 'swan-release.aab' ;;
+    apk) printf '%s' 'swan-release.apk' ;;
+    aab) printf '%s' 'swan-release.aab' ;;
     ipa) printf '%s' 'swan-release.ipa' ;;
     *) return 1 ;;
   esac
@@ -49,8 +43,8 @@ target_artifact_basename() {
 target_unsigned_glob() {
   local target=$1
   case "$target" in
-    apk | android_apk) printf '%s' 'build/app/outputs/flutter-apk/app-release.apk' ;;
-    aab | android_aab) printf '%s' 'build/app/outputs/bundle/release/app-release.aab' ;;
+    apk) printf '%s' 'build/app/outputs/flutter-apk/app-release.apk' ;;
+    aab) printf '%s' 'build/app/outputs/bundle/release/app-release.aab' ;;
     *) return 1 ;;
   esac
 }

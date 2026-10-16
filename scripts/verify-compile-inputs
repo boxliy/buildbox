@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+set +x
+state=${BUILDBOX_STATE_DIR:?}
+source_root=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:?}/aviary-source}
+# This is untrusted compile code, executed only on the credential-free runner.
+python3 "$source_root/waterfowl/tools/build_spec_adapter.py" --spec "$state/spec.json" --source "$source_root"
+expected=$(jq -er '.config.frozenInputs.flutterVersion' "$state/spec.json")
+actual=$(flutter --version --machine | jq -er '.frameworkVersion')
+[[ "$actual" == "$expected" ]] || { echo 'Flutter toolchain does not match frozen inputs' >&2; exit 1; }
+[[ -f "$source_root/waterfowl/pubspec.lock" ]] || { echo 'Workspace lockfile is missing' >&2; exit 1; }
+(cd "$source_root/waterfowl" && flutter pub get --enforce-lockfile)

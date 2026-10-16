@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+set +x
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+state=${BUILDBOX_STATE_DIR:?}
+source_root=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:?}/aviary-source}
+[[ "$(uname -s)" == Darwin ]] || { echo 'iOS compilation requires macOS' >&2; exit 1; }
+[[ ! -v HAWK_STAGE_TOKEN && ! -v ACTIONS_ID_TOKEN_REQUEST_TOKEN ]] || { echo 'compile runner must not carry stage credentials' >&2; exit 1; }
+"$script_dir/verify-compile-inputs"
+jq -e '.config.platform == "ios" and .config.targets == ["ipa"]' "$state/spec.json" >/dev/null
+# The operator-approved runner's Xcode build must match the immutable Spec.
+expected_xcode=$(jq -er '.config.frozenInputs.xcodeBuild | select(type == "string" and length > 0)' "$state/spec.json")
+actual_xcode=$(xcodebuild -version | awk '/Build version/ {print $3}')
+[[ "$actual_xcode" == "$expected_xcode" ]] || { echo 'Xcode build mismatch' >&2; exit 1; }
+version=$(jq -er '.config.frozenInputs.versionName' "$state/spec.json")
+number=$(jq -er '.config.frozenInputs.buildNumber' "$state/spec.json")
+identifier=$(jq -er '.config.applicationIdentifier' "$state/spec.json")
+name=$(jq -er '.config.appDisplayName' "$state/spec.json")
+[[ "$identifier" =~ ^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*)+$ ]] || exit 1
+# Xcode project build settings override process environment. Supply a dedicated
+# xcconfig through XCODE_XCCONFIG_FILE so identity cannot fall back to Swan.
+python3 - "$state/identity.xcconfig" "$identifier" "$name" <<'PYCFG'
+import sys
+from pathlib import Path
+if any(c in sys.argv[3] for c in '\n\r\0'):
+    raise SystemExit('invalid display name')
+# Display names are written directly to the generated product's Info.plist below.
+Path(sys.argv[1]).write_text('SWAN_IOS_BUNDLE_ID = ' + sys.argv[2] + '\n')
+PYCFG
+export XCODE_XCCONFIG_FILE="$state/identity.xcconfig"
+args=()
+while IFS= read -r entry; do
+  key=$(printf '%s' "$entry" | base64 --decode | jq -r '.[0]')
+  value=$(printf '%s' "$entry" | base64 --decode | jq -r '.[1]')
+  args+=("--dart-define=$key=$value")
+done < <(jq -r '.config.dartDefines | to_entries[] | [.key,.value] | @base64' "$state/spec.json")
+cd "$source_root/waterfowl/apps/swan"
+# Source build phases run only here, before any signing material is available.
+flutter build ios --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "${args[@]}"
+# Plist mutation is data-only and occurs before isolated signing.
+python3 - "$name" <<'PYNAME'
+from pathlib import Path
+import plistlib, sys
+for info in Path('build/ios/iphoneos').glob('*.app/Info.plist'):
+    body=plistlib.loads(info.read_bytes());body['CFBundleDisplayName']=sys.argv[1]
+    info.write_bytes(plistlib.dumps(body))
+PYNAME
+mkdir -p "$state/unsigned"
+python3 - "$state/unsigned/swan-release.ipa" <<'PY'
+from pathlib import Path
+import sys, zipfile
+apps = list(Path('build/ios/iphoneos').glob('*.app'))
+if len(apps) != 1:
+    raise SystemExit('expected exactly one unsigned device app')
+with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as archive:
+    for item in sorted(apps[0].rglob('*')):
+        if item.is_symlink():
+            raise SystemExit('symlinks are not supported in unsigned iOS transport')
+        if item.is_file():
+            archive.write(item, Path('Payload') / apps[0].name / item.relative_to(apps[0]))
+PY

@@ -45,7 +45,7 @@ while IFS= read -r target; do
   sha256=$(printf '%s' "$artifact" | jq -er '.sha256')
   body=$(jq -nc \
     --arg target "$target" \
-    --arg fileName "$file_name" \
+    --arg fileName "$target.$target" \
     --argjson byteSize "$byte_size" \
     --arg sha256 "$sha256" \
     --arg contentType "$(target_content_type "$target")" \

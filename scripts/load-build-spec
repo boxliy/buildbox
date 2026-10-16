@@ -76,17 +76,16 @@ RUN_ID=$(json_get_required '.runId' runId)
 [[ "$RUN_ID" == "$EXPECTED_RUN_ID" ]] || die 'build spec response does not match dispatch run'
 SPEC_HASH=$(json_get_required '.specHash' specHash)
 ARTIFACT_PREFIX=$(json_get_required '.artifactPrefix' artifactPrefix)
-ANDROID_APPLICATION_ID=$(json_get_required '.config.androidApplicationId' config.androidApplicationId)
+ANDROID_APPLICATION_ID=$(json_get_required '.config.applicationIdentifier // .config.androidApplicationId // .config.iosBundleId' config.applicationIdentifier)
 APP_DISPLAY_NAME=$(json_get_required '.config.appDisplayName' config.appDisplayName)
 [[ "$ANDROID_APPLICATION_ID" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || die 'androidApplicationId is invalid'
 
-CONFIG_COMPACT=$(jq -ceS '.config | objects' "$SPEC_RESPONSE") || die 'config must be an object'
-ACTUAL_SPEC_HASH="sha256:$(printf '%s' "$CONFIG_COMPACT" | sha256sum | awk '{print $1}')"
+ACTUAL_SPEC_HASH=$(python3 "$SCRIPT_DIR/spec_identity.py" "$SPEC_RESPONSE") || die 'invalid Build Spec v1 identity'
 [[ "$SPEC_HASH" == "$ACTUAL_SPEC_HASH" ]] || die 'specHash does not match config'
 
 TARGETS_RAW=$(jq -cer '.targets // .config.targets' "$SPEC_RESPONSE") || die 'targets must be a JSON array'
 TARGETS_COMPACT=$(printf '%s' "$TARGETS_RAW" | targets_canonicalize_json) \
-  || die 'targets must contain 1-2 unique values from apk, aab, ipa (legacy android_apk/android_aab accepted)'
+  || die 'targets must contain 1-2 unique values from apk, aab, ipa'
 
 jq -e \
   --arg repository "$REPOSITORY" \
@@ -94,15 +93,10 @@ jq -e \
   --arg artifactPrefix "$ARTIFACT_PREFIX" \
   --argjson targets "$TARGETS_COMPACT" \
   --argjson configTargets "$(jq -c '.config.targets' "$SPEC_RESPONSE")" '
-  def canon($t):
-    if $t == "android_apk" then "apk"
-    elif $t == "android_aab" then "aab"
-    else $t
-    end;
   .config.sourceRepo == $repository and
   .config.commitSha == $commitSha and
   (.config.artifactPrefix as $base | $artifactPrefix | startswith($base)) and
-  ($configTargets | map(canon(.))) == $targets
+  $configTargets == $targets
 ' \
   "$SPEC_RESPONSE" >/dev/null || die 'signed config does not match build spec fields'
 

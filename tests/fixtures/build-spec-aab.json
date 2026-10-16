@@ -9,7 +9,7 @@
     "aab"
   ],
   "artifactPrefix": "builds/spec-aab-1/build-aab-1/",
-  "specHash": "sha256:9b4d7c43da896f34a740f3f113723c668f33a314b5d4af2b1bd72f2a1be8a750",
+  "specHash": "sha256:3c148946c6654e42be1385db8168408618db6d609762480d5242595f276041b1",
   "config": {
     "androidApplicationId": "com.example.beta",
     "appDisplayName": "Beta App",
@@ -36,7 +36,13 @@
     "targets": [
       "aab"
     ],
-    "tenantId": "402"
+    "tenantId": "402",
+    "schemaVersion": 1,
+    "frozenInputs": {
+      "flutterVersion": "3.47.4",
+      "versionName": "1.2.3",
+      "buildNumber": 7
+    }
   },
   "runId": "402",
   "callbackUrl": "/api/v1/buildbox/runs/402/callback"

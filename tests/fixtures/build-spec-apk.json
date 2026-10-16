@@ -6,11 +6,11 @@
   "sourceRepo": "boxliy/aviary",
   "commitSha": "1111111111111111111111111111111111111111",
   "targets": [
-    "apk",
-    "aab"
+    "aab",
+    "apk"
   ],
   "artifactPrefix": "builds/spec-apk-1/build-apk-1/",
-  "specHash": "sha256:5b7d512e38675a1192013fb41922cec9b43d7c75fdf9c39049d8a36b470a4260",
+  "specHash": "sha256:0ac6298ed058ed5c7b5f8bb3c70de24473b6526a465bb3318407bea83aff0718",
   "config": {
     "androidApplicationId": "com.example_alpha",
     "appDisplayName": "Alpha App",
@@ -47,10 +47,16 @@
     "sourceRepo": "boxliy/aviary",
     "storageProfileId": "301",
     "targets": [
-      "apk",
-      "aab"
+      "aab",
+      "apk"
     ],
-    "tenantId": "401"
+    "tenantId": "401",
+    "schemaVersion": 1,
+    "frozenInputs": {
+      "flutterVersion": "3.47.4",
+      "versionName": "1.2.3",
+      "buildNumber": 7
+    }
   },
   "runId": "401",
   "callbackUrl": "/api/v1/buildbox/runs/401/callback"
