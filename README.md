@@ -37,6 +37,8 @@ as their own artifact. `build-android` rejects debug-signed and already-signed
 zip outputs. `sign-android` rejects those same states and exits non-zero when
 signing material is absent or when no production signer is implemented.
 Phase A does not copy unsigned bytes forward or report `succeeded`.
+A missing keystore is a failed build. The workflow does not fall back to
+debug signing or publish the unsigned APK as a downloadable artifact.
 
 ## Spec v1 targets and object keys
 
