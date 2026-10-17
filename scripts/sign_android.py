@@ -107,6 +107,13 @@ def sign_one(source, destination, target, metadata, material, private):
     certificate.write_text(run(["keytool", "-exportcert", "-rfc", "-keystore", str(keystore),
         "-storepass:env", "SIGN_STORE_PASSWORD", "-alias", material["alias"]], env))
     run(["openssl", "x509", "-in", str(certificate), "-checkend", "0", "-noout"])
+    # Read the actual frozen certificate, not caller-supplied algorithm metadata.
+    certificate_text = run(["openssl", "x509", "-in", str(certificate), "-text", "-noout"])
+    algorithm = re.search(r"Public Key Algorithm:\s*(\S+)", certificate_text)
+    signature_algorithm = {"rsaEncryption": "SHA256withRSA", "id-ecPublicKey": "SHA256withECDSA"}.get(
+        algorithm.group(1) if algorithm else "")
+    if not signature_algorithm:
+        raise ValueError("unsupported signing key algorithm")
     if target == "apk":
         aligned = private / "aligned.apk"
         run(["zipalign", "-p", "-f", "4", str(source), str(aligned)])
@@ -120,7 +127,7 @@ def sign_one(source, destination, target, metadata, material, private):
             raise ValueError("APK certificate mismatch")
     else:
         run(["jarsigner", "-keystore", str(keystore), "-storepass:env", "SIGN_STORE_PASSWORD",
-             "-keypass:env", "SIGN_KEY_PASSWORD", "-sigalg", "SHA256withRSA", "-digestalg", "SHA-256",
+             "-keypass:env", "SIGN_KEY_PASSWORD", "-sigalg", signature_algorithm, "-digestalg", "SHA-256",
              "-signedjar", str(destination), str(source), material["alias"]], env)
         run(["jarsigner", "-verify", "-strict", "-keystore", str(keystore),
              "-storepass:env", "SIGN_STORE_PASSWORD", str(destination)], env)

@@ -17,6 +17,8 @@ export FLUTTER_LOG="$TMP_DIR/flutter.log"
 export GITHUB_WORKSPACE="$TMP_DIR/workspace"
 export GITHUB_OUTPUT="$TMP_DIR/github-output.log"
 export GITHUB_ENV="$TMP_DIR/github-env.log"
+export GITHUB_EVENT_PATH="$TMP_DIR/event.json"
+printf '{"inputs":{"dispatch_proof":"%064d"}}\n' 0 >"$GITHUB_EVENT_PATH"
 export BUILDBOX_GITHUB_RUN_ID=987654321
 printf '%s\n' 'UNCHANGED=1' >"$GITHUB_ENV"
 

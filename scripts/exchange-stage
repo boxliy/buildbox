@@ -43,13 +43,21 @@ OIDC_RESPONSE=$(curl --fail --silent --show-error \
 OIDC_TOKEN=$(printf '%s' "$OIDC_RESPONSE" | jq -er '.value | select(type == "string" and length > 0)') \
   || die 'GitHub did not return an OIDC token'
 
+# Read dispatch input as data. Do not interpolate it into the rendered Actions
+# script or step environment, which GitHub prints before masking runs.
+DISPATCH_PROOF=$(jq -r '.inputs.dispatch_proof // ""' "${GITHUB_EVENT_PATH:?}")
+[[ -z "$DISPATCH_PROOF" || "$DISPATCH_PROOF" =~ ^[0-9a-f]{64}$ ]] || die 'invalid dispatch proof'
+if [[ -n "$DISPATCH_PROOF" ]]; then
+  printf '::add-mask::%s\n' "$DISPATCH_PROOF"
+fi
 BASE_URL=${HAWK_BASE_URL%/}
 # Hawk Id deserializes only from a decimal string, never from a JSON number.
 EXCHANGE_BODY=$(jq -nc \
   --arg oidcToken "$OIDC_TOKEN" \
   --arg runId "$BUILDBOX_RUN_ID" \
   --arg stage "$STAGE" \
-  '{oidcToken: $oidcToken, runId: $runId, stage: $stage}')
+  --arg dispatchProof "$DISPATCH_PROOF" \
+  '{oidcToken: $oidcToken, runId: $runId, stage: $stage, dispatchProof: $dispatchProof}')
 RESPONSE=$(curl --fail --silent --show-error \
   --request POST \
   --header 'Content-Type: application/json' \
