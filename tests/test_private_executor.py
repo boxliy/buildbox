@@ -1,5 +1,6 @@
 """Public code hosting must never become public product transport."""
 import re
+import subprocess
 from pathlib import Path
 import unittest
 
@@ -41,3 +42,17 @@ class PrivateExecutorTests(unittest.TestCase):
         self.assertIn('set +x', script)
         self.assertIn('GITHUB_EVENT_PATH', script)
         self.assertNotIn('dispatch_proof', (ROOT / '.github/workflows/build.yml').read_text().split('run-name:',1)[1].split('\n',1)[0])
+
+    def test_caller_reusable_and_script_pins_match_delivered_code(self):
+        caller = (ROOT / '.github/workflows/build.yml').read_text()
+        for stage, sha in re.findall(r'uses: boxliy/buildbox/\.github/workflows/(prepare|sign|finalize)\.yml@([0-9a-f]{40})', caller):
+            self.assertEqual(subprocess.check_output(['git', 'show', f'{sha}:.github/workflows/{stage}.yml'], cwd=ROOT),
+                             (ROOT / f'.github/workflows/{stage}.yml').read_bytes())
+        pins = set()
+        for workflow in (ROOT / '.github/workflows').glob('*.yml'):
+            pins.update(re.findall(r'ref: ([0-9a-f]{40})', workflow.read_text()))
+        self.assertEqual(len(pins), 1)
+        for sha in pins:
+            for script in (ROOT / 'scripts').iterdir():
+                if script.is_file():
+                    self.assertEqual(subprocess.check_output(['git', 'show', f'{sha}:scripts/{script.name}'], cwd=ROOT), script.read_bytes())
