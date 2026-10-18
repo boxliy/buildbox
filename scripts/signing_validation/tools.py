@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 
-from .contract import TOOL_TIMEOUT_SECONDS
+from .contract import TOOL_TIMEOUT_SECONDS, TRUST_CHECKS
 
 
 def which(name):
@@ -26,6 +26,14 @@ def probe():
     }
 
 
+def not_executed():
+    """Trust checks this process did not run. Non-empty forbids status=valid."""
+    capabilities = probe()
+    if capabilities["macosKeychain"]:
+        return []
+    return list(TRUST_CHECKS)
+
+
 def _version(binary, args):
     result = subprocess.run([binary, *args], capture_output=True, text=True, timeout=5, check=False)
     line = (result.stdout or result.stderr).strip().splitlines()
@@ -39,7 +47,7 @@ def _java_version():
 
 
 def run(args, env, timeout=TOOL_TIMEOUT_SECONDS):
-    """Run a tool. The caller must not put secrets in args."""
+    """Run a tool. The caller must not put secrets in args. Stderr is discarded."""
     for item in args:
         if not isinstance(item, str) or "\x00" in item or "\n" in item:
             raise ValueError("tool argument rejected")

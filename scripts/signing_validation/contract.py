@@ -1,12 +1,13 @@
-"""Signing-material validation contract v1.
+"""Hawk signing-material validation envelope, schema version 1.
 
-This module is the offline schema shared with Hawk (AVIARY-88). It does not
-fetch credentials, compile an app, or sign a product. Passwords and private
-material never appear in the result object.
+The runner accepts the JSON Hawk returns from GET /material and writes the
+JSON Hawk accepts on POST /result. Passwords and private material never appear
+in the result object. This module does not fetch credentials, compile an app,
+or sign a product.
 """
 
-CONTRACT_VERSION = "signing-material-validation/v1"
-VALIDATOR_VERSION = "1.0.0"
+SCHEMA_VERSION = 1
+VALIDATOR_VERSION = "1.1.0"
 
 MAX_MATERIAL_BYTES = 2 * 1024 * 1024
 MAX_PASSWORD_BYTES = 256
@@ -18,10 +19,9 @@ MAX_ZIP_ENTRIES = 64
 MAX_EXPANDED_BYTES = 4 * 1024 * 1024
 TOOL_TIMEOUT_SECONDS = 20
 
-PLATFORMS = ("android", "ios")
+KINDS = ("android_keystore", "apple_certificate", "apple_profile")
 ANDROID_PURPOSES = ("direct_distribution", "play_upload")
 ANDROID_FORMATS = ("JKS", "PKCS12")
-APPLE_KINDS = ("certificate", "provisioning_profile")
 APPLE_DISTRIBUTIONS = ("development", "ad_hoc", "enterprise", "app_store")
 PUBLIC_KEY_ALGORITHMS = ("RSA", "EC")
 
@@ -30,6 +30,7 @@ REASON_OK = "ok"
 REASON_SCOPE_MISMATCH = "scope_mismatch"
 REASON_UNSUPPORTED_INPUT = "unsupported_input"
 REASON_MALFORMED_MATERIAL = "malformed_material"
+REASON_UNKNOWN_FORMAT = "unknown_format"
 REASON_SIZE_LIMIT = "size_limit"
 REASON_PATH_REJECTED = "path_rejected"
 REASON_WRONG_PASSWORD = "wrong_password"
@@ -56,6 +57,13 @@ REASON_IDEMPOTENT_FAILURE = "idempotent_terminal_failure"
 
 # Material validation never grants compile, sign, publish, or asset management.
 STAGE = "validate"
+
+# Trust checks this Linux parser does not perform. Their presence forbids status=valid.
+TRUST_CHECKS = (
+    "security_cms_anchor_verify",
+    "keychain_import",
+    "codesign_identity_check",
+)
 
 # Result document keys that may carry secret-shaped values. Tests scan output.
 FORBIDDEN_RESULT_KEYS = frozenset({

@@ -57,6 +57,14 @@ theme and FTL resources; the branding tool generates native icons/launch images.
 Android permissions and iOS usage descriptions derive from the fixed capabilities;
 unsupported capabilities fail rather than silently using default Swan branding.
 
+## Material validation
+
+`scripts/signing_validation` checks one authorized keystore, Apple certificate,
+or provisioning profile. It does not compile or sign an app. The request and
+result use Hawk schema version 1. `status: valid` requires the macOS trust
+checks in `validate-signing-material.yml`; a Linux parse is not trust.
+See `scripts/signing_validation/README.md`.
+
 ## Signing and artifacts
 
 APK uses `zipalign` and `apksigner`, verifies certificate, package and version.

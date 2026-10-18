@@ -42,16 +42,16 @@ def certificate(key, common_name, team=None, not_before=None, not_after=None, is
     return builder.sign(issuer_key or key, hashes.SHA256())
 
 
-def p12_bytes(key, cert, password=PASSWORD):
+def p12_bytes(key, cert, password=PASSWORD, chain=None):
     return pkcs12.serialize_key_and_certificates(
-        b"fixture", key, cert, None,
+        b"fixture", key, cert, chain,
         serialization.BestAvailableEncryption(password.encode()),
     )
 
 
-def keystore(path, alias, key, cert, store_type, store_password=PASSWORD, key_password=None):
+def keystore(path, alias, key, cert, store_type, store_password=PASSWORD, key_password=None, chain=None):
     container = path.with_name(path.name + ".src.p12")
-    container.write_bytes(p12_bytes(key, cert, key_password or store_password))
+    container.write_bytes(p12_bytes(key, cert, key_password or store_password, chain=chain))
     env = dict(__import__("os").environ)
     env.update(SRC_PASS=key_password or store_password, DEST_PASS=store_password, KEY_PASS=key_password or store_password)
     subprocess.run([

@@ -1,7 +1,7 @@
 """Validate an Apple identity and a provisioning profile separately.
 
-CMS structural checks use OpenSSL. A successful parse is not trust, not
-installability, and not a substitute for the macOS security/codesign job.
+CMS structural checks use OpenSSL `-verify -noverify`. A successful parse is
+not trust and not installability. Missing macOS trust tools fail closed.
 """
 
 import datetime
@@ -18,7 +18,6 @@ from cryptography.x509.oid import NameOID
 
 from .contract import (
     APPLE_DISTRIBUTIONS,
-    APPLE_KINDS,
     MAX_DEVICES,
     MAX_PLIST_BYTES,
     PUBLIC_KEY_ALGORITHMS,
@@ -29,7 +28,6 @@ from .contract import (
     REASON_CMS_INVALID,
     REASON_DISTRIBUTION_MISMATCH,
     REASON_ENTITLEMENTS_MISMATCH,
-    REASON_MACOS_REQUIRED,
     REASON_MALFORMED_MATERIAL,
     REASON_OK,
     REASON_PRIVATE_KEY_MISMATCH,
@@ -37,32 +35,28 @@ from .contract import (
     REASON_PROFILE_NOT_YET_VALID,
     REASON_PROFILE_TAMPERED,
     REASON_TEAM_MISMATCH,
+    REASON_UNKNOWN_FORMAT,
     REASON_UNSUPPORTED_ALGORITHM,
     REASON_UNSUPPORTED_INPUT,
     REASON_WRONG_PASSWORD,
 )
 from .limits import bounded_file, bounded_password, reject_zip
 from .outcome import ValidationFailure
-from .time_basis import as_utc, instant, taipei_date, validity
-from .tools import digest_bytes, probe, run, which
+from .time_basis import as_utc, instant, validity
+from .tools import digest_bytes, run, which
 
 
-def validate(request, evaluated_at):
-    kind = request.get("kind")
-    if kind not in APPLE_KINDS:
-        raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "apple material kind is not supported")
-    if kind == "certificate":
-        return _certificate(request, evaluated_at)
-    return _profile(request, evaluated_at)
-
-
-def _certificate(request, evaluated_at):
+def validate_certificate(request, evaluated_at):
     if not which("openssl"):
         raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "apple certificate validation requires openssl")
     material = request.get("material") or {}
     password = bounded_password(material.get("password"), "password")
-    data = bounded_file(material["path"]) if "path" in material else _inline(material)
-    reject_zip(data) if data[:2] == b"PK" else None
+    data = _material_bytes(material)
+    if data[:2] == b"PK":
+        reject_zip(data)
+        raise ValidationFailure(REASON_UNKNOWN_FORMAT, "certificate container is a zip archive")
+    if len(data) < 4 or data[0] != 0x30:
+        raise ValidationFailure(REASON_UNKNOWN_FORMAT, "certificate container is not PKCS12")
     with tempfile.TemporaryDirectory(prefix="apple-cert-") as temporary:
         container = Path(temporary) / "identity.p12"
         container.write_bytes(data)
@@ -83,24 +77,23 @@ def _certificate(request, evaluated_at):
     certificate = _leaf(pem)
     _match_key(key_pem, certificate)
     metadata = _certificate_metadata(certificate, evaluated_at)
-    reasons = [metadata["validity"]] if metadata["validity"] != REASON_OK else [REASON_OK]
-    return {
-        "platform": "ios",
-        "kind": "certificate",
-        "status": "valid" if reasons == [REASON_OK] else "invalid",
-        "reasonCodes": reasons,
-        "certificate": metadata,
-        "evidence": _capability_evidence(digest_bytes(data)),
-    }
+    metadata["materialSha256"] = digest_bytes(data)
+    metadata["installable"] = False
+    metadata["trustedByPlatform"] = False
+    reasons = [metadata.pop("validity")]
+    return metadata, reasons
 
 
-def _profile(request, evaluated_at):
+def validate_profile(request, evaluated_at):
     if not which("openssl"):
         raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "profile validation requires openssl")
     material = request.get("material") or {}
-    data = bounded_file(material["path"]) if "path" in material else _inline(material)
+    data = _material_bytes(material)
     if len(data) > MAX_PLIST_BYTES:
         raise ValidationFailure(REASON_MALFORMED_MATERIAL, "profile exceeds the plist limit")
+    if data[:2] == b"PK":
+        reject_zip(data)
+        raise ValidationFailure(REASON_UNKNOWN_FORMAT, "profile container is a zip archive")
     plist_bytes, cms = _decode_cms(data)
     try:
         profile = plistlib.loads(plist_bytes)
@@ -109,26 +102,23 @@ def _profile(request, evaluated_at):
     if not isinstance(profile, dict):
         raise ValidationFailure(REASON_CMS_INVALID, "profile payload is not an object")
     derived = _derive(profile, evaluated_at)
-    expectations = request.get("expectations") or {}
-    mismatches = _compare(profile, derived, expectations)
+    expected = request.get("expected") if isinstance(request.get("expected"), dict) else {}
+    mismatches = _compare(profile, derived, expected)
     reasons = list(derived["reasonCodes"])
     reasons.extend(mismatches)
-    status = "valid" if reasons == [REASON_OK] else "invalid"
     if REASON_OK in reasons and len(reasons) > 1:
         reasons = [code for code in reasons if code != REASON_OK]
-    return {
-        "platform": "ios",
-        "kind": "provisioning_profile",
-        "status": status,
-        "reasonCodes": reasons,
-        "profile": derived["profile"],
-        "evidence": {
-            **_capability_evidence(digest_bytes(data)),
-            "cmsDigestSha256": digest_bytes(cms),
-            "payloadSha256": digest_bytes(plist_bytes),
-            "claimedDistributionIgnored": expectations.get("distribution") not in (None, derived["profile"]["distribution"]),
-        },
+    metadata = {
+        **derived["profile"],
+        "materialSha256": digest_bytes(data),
+        "cmsDigestSha256": digest_bytes(cms),
+        "payloadSha256": digest_bytes(plist_bytes),
+        "cmsParsed": True,
+        "cmsTrusted": False,
+        "installable": False,
+        "trustedByPlatform": False,
     }
+    return metadata, reasons
 
 
 def _decode_cms(data):
@@ -139,7 +129,6 @@ def _decode_cms(data):
         code, output = run(["openssl", "cms", "-verify", "-noverify", "-inform", "DER", "-in", str(source)], os.environ)
         if code or not output:
             raise ValidationFailure(REASON_CMS_INVALID, "profile CMS could not be decoded")
-        # -noverify decodes the signed plist. It does not establish Apple trust.
         encoded = output.encode()
         if not encoded.startswith(b"<?xml") and not encoded.startswith(b"bplist"):
             raise ValidationFailure(REASON_CMS_INVALID, "CMS payload is not a profile plist")
@@ -184,9 +173,9 @@ def _match_key(private_pem, certificate):
 def _certificate_metadata(certificate, evaluated_at):
     public = certificate.public_key()
     if isinstance(public, rsa.RSAPublicKey):
-        algorithm, detail = "RSA", public.key_size
+        algorithm = "RSA"
     elif isinstance(public, ec.EllipticCurvePublicKey):
-        algorithm, detail = "EC", public.curve.name
+        algorithm = "EC"
     else:
         raise ValidationFailure(REASON_UNSUPPORTED_ALGORITHM, "certificate algorithm is not supported")
     if algorithm not in PUBLIC_KEY_ALGORITHMS:
@@ -195,14 +184,12 @@ def _certificate_metadata(certificate, evaluated_at):
         certificate.not_valid_before_utc, certificate.not_valid_after_utc, evaluated_at,
         REASON_CERTIFICATE_NOT_YET_VALID, REASON_CERTIFICATE_EXPIRED)
     return {
-        "sha256": certificate.fingerprint(hashes.SHA256()).hex(),
-        "subject": certificate.subject.rfc4514_string(),
-        "issuer": certificate.issuer.rfc4514_string(),
-        "notBefore": instant(certificate.not_valid_before_utc),
-        "notAfter": instant(certificate.not_valid_after_utc),
-        "publicKeyAlgorithm": algorithm,
-        "publicKeyDetail": detail,
         "teamId": _team(certificate),
+        "certificateSha256": certificate.fingerprint(hashes.SHA256()).hex(),
+        "notBefore": instant(certificate.not_valid_before_utc),
+        "expiresAt": instant(certificate.not_valid_after_utc),
+        "algorithm": algorithm,
+        "signingCapable": state is None,
         "validity": state or REASON_OK,
     }
 
@@ -217,7 +204,8 @@ def _team(certificate):
 def _derive(profile, evaluated_at):
     reasons = []
     team = _one(profile.get("TeamIdentifier"), REASON_TEAM_MISMATCH, reasons)
-    entitlements = profile.get("Entitlements") if isinstance(profile.get("Entitlements"), dict) else {}
+    raw_entitlements = profile.get("Entitlements") if isinstance(profile.get("Entitlements"), dict) else {}
+    entitlements = _public_entitlements(raw_entitlements)
     application = entitlements.get("application-identifier")
     bundle = None
     if isinstance(application, str) and team and application.startswith(team + "."):
@@ -260,22 +248,30 @@ def _derive(profile, evaluated_at):
         "reasonCodes": list(dict.fromkeys(reasons)),
         "profile": {
             "uuid": profile.get("UUID") if isinstance(profile.get("UUID"), str) else None,
-            "name": profile.get("Name") if isinstance(profile.get("Name"), str) else None,
             "teamId": team,
-            "teamName": profile.get("TeamName") if isinstance(profile.get("TeamName"), str) else None,
-            "bundleId": bundle,
             "applicationIdentifier": application if isinstance(application, str) else None,
-            "distribution": distribution,
-            "developerCertificateSha256": fingerprints,
+            "distributionMethod": distribution,
+            "certificateSha256s": fingerprints,
+            "entitlements": entitlements,
+            "expiresAt": instant(expires) if expires else None,
+            "bundleId": bundle,
             "provisionedDeviceCount": device_count,
             "provisionsAllDevices": bool(profile.get("ProvisionsAllDevices")),
             "getTaskAllow": bool(entitlements.get("get-task-allow")),
-            "creationDate": instant(created) if created else None,
-            "expirationDate": instant(expires) if expires else None,
-            "expirationDateTaipei": taipei_date(expires) if expires else None,
-            "entitlementKeys": sorted(str(key) for key in entitlements),
         },
     }
+
+
+def _public_entitlements(entitlements):
+    public = {}
+    for key, value in entitlements.items():
+        if not isinstance(key, str) or len(key) > 128:
+            continue
+        if isinstance(value, bool) or (isinstance(value, int) and not isinstance(value, bool)):
+            public[key] = value
+        elif isinstance(value, str) and len(value) <= 256:
+            public[key] = value
+    return public
 
 
 def _distribution(profile, entitlements, reasons):
@@ -295,28 +291,40 @@ def _distribution(profile, entitlements, reasons):
     return None
 
 
-def _compare(profile, derived, expectations):
+def _compare(profile, derived, expected):
     found = []
-    expected_team = expectations.get("teamId")
-    if expected_team is not None and expected_team != derived["profile"]["teamId"]:
+    facts = derived["profile"]
+    expected_team = expected.get("teamId")
+    if expected_team is not None and expected_team != facts["teamId"]:
         found.append(REASON_TEAM_MISMATCH)
-    expected_bundle = expectations.get("bundleId")
-    if expected_bundle is not None and expected_bundle != derived["profile"]["bundleId"]:
+    expected_bundle = expected.get("bundleId")
+    if expected_bundle is not None and expected_bundle != facts["bundleId"]:
         found.append(REASON_BUNDLE_MISMATCH)
-    expected_distribution = expectations.get("distribution")
+    expected_distribution = expected.get("distributionMethod", expected.get("distribution"))
     if expected_distribution is not None:
-        if expected_distribution not in APPLE_DISTRIBUTIONS or expected_distribution != derived["profile"]["distribution"]:
+        if expected_distribution not in APPLE_DISTRIBUTIONS or expected_distribution != facts["distributionMethod"]:
             found.append(REASON_DISTRIBUTION_MISMATCH)
-    expected_cert = expectations.get("certificateSha256")
-    if expected_cert is not None and expected_cert not in derived["profile"]["developerCertificateSha256"]:
+    expected_cert = expected.get("certificateSha256")
+    if expected_cert is not None and expected_cert not in facts["certificateSha256s"]:
         found.append(REASON_CERTIFICATE_MISMATCH)
-    if expectations.get("requireGetTaskAllow") is True and not derived["profile"]["getTaskAllow"]:
+    expected_entitlements = expected.get("entitlements")
+    if expected_entitlements is not None:
+        if not isinstance(expected_entitlements, dict) or not _entitlements_match(facts["entitlements"], expected_entitlements):
+            found.append(REASON_ENTITLEMENTS_MISMATCH)
+    if expected.get("requireGetTaskAllow") is True and not facts["getTaskAllow"]:
         found.append(REASON_ENTITLEMENTS_MISMATCH)
-    if expectations.get("forbidGetTaskAllow") is True and derived["profile"]["getTaskAllow"]:
+    if expected.get("forbidGetTaskAllow") is True and facts["getTaskAllow"]:
         found.append(REASON_ENTITLEMENTS_MISMATCH)
-    if profile.get("IsXcodeManaged") is True and expectations.get("allowXcodeManaged") is not True:
+    if profile.get("IsXcodeManaged") is True and expected.get("allowXcodeManaged") is not True:
         found.append(REASON_PROFILE_TAMPERED)
     return found
+
+
+def _entitlements_match(actual, expected):
+    for key, value in expected.items():
+        if actual.get(key) != value:
+            return False
+    return True
 
 
 def _one(value, code, reasons):
@@ -332,26 +340,11 @@ def _time(value):
     return None
 
 
-def _capability_evidence(material_sha256):
-    capabilities = probe()
-    return {
-        "materialSha256": material_sha256,
-        "cmsVerifiedWithAppleAnchor": False,
-        "installable": False,
-        "trustedByPlatform": False,
-        "macosKeychain": capabilities["macosKeychain"],
-        "notExecuted": [] if capabilities["macosKeychain"] else [
-            "security_cms_anchor_verify",
-            "keychain_import",
-            "codesign_identity_check",
-        ],
-        "requiredForTrust": REASON_MACOS_REQUIRED,
-    }
-
-
-def _inline(material):
+def _material_bytes(material):
     import base64
-    encoded = material.get("bytesBase64")
+    if "path" in material:
+        return bounded_file(material["path"])
+    encoded = material.get("containerBase64")
     if not isinstance(encoded, str):
         raise ValidationFailure(REASON_MALFORMED_MATERIAL, "apple material is missing")
     try:

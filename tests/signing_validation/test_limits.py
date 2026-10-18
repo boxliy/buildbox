@@ -6,49 +6,66 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from scripts.signing_validation.contract import CONTRACT_VERSION, FORBIDDEN_RESULT_KEYS
+from scripts.signing_validation.contract import FORBIDDEN_RESULT_KEYS, SCHEMA_VERSION
 from scripts.signing_validation.outcome import ValidationFailure
 from scripts.signing_validation.validate import validate_document
+
+TOOLCHAIN = "0123456789abcdef0123456789abcdef01234567"
+
+
+def envelope(kind, **extra):
+    document = {
+        "schemaVersion": SCHEMA_VERSION,
+        "validationId": "val",
+        "tenantId": "t",
+        "assetId": "a",
+        "versionId": "v",
+        "kind": kind,
+        "toolchainSha": TOOLCHAIN,
+        "evaluatedAt": "2026-06-01T00:00:00Z",
+        "material": {},
+        "expected": {},
+    }
+    document.update(extra)
+    return document
 
 
 class LimitTests(unittest.TestCase):
     def test_scope_rejects_sign_stage_and_kind_mismatch(self):
-        document = {
-            "contract": CONTRACT_VERSION, "evaluatedAt": "2026-06-01T00:00:00Z",
-            "platform": "android", "purpose": "direct_distribution", "storeType": "PKCS12",
-            "scope": {
-                "validationId": "val", "tenantId": "t", "assetId": "a", "versionId": "v",
-                "kind": "android_keystore", "stage": "sign",
-            },
-            "material": {"path": "unused", "storePassword": "x", "keyPassword": "x"},
-        }
+        document = envelope(
+            "android_keystore",
+            stage="sign",
+            expected={"purpose": "direct_distribution", "storeType": "PKCS12"},
+            material={"path": "unused", "password": "x", "keyPassword": "x"},
+        )
         with self.assertRaises(ValidationFailure) as error:
             validate_document(document)
         self.assertEqual(error.exception.code, "scope_mismatch")
 
-    def test_traversal_zip_and_size_are_rejected(self):
+    def test_zip_slip_is_path_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "bad.zip"
             with zipfile.ZipFile(archive, "w") as handle:
                 handle.writestr("../outside", b"x")
-            document = {
-                "contract": CONTRACT_VERSION, "evaluatedAt": "2026-06-01T00:00:00Z",
-                "platform": "ios", "kind": "certificate",
-                "scope": {
-                    "validationId": "val", "tenantId": "t", "assetId": "a", "versionId": "v",
-                    "kind": "apple_certificate", "stage": "validate",
-                },
-                "material": {"path": str(archive), "password": "x"},
-            }
+            document = envelope(
+                "apple_certificate",
+                material={"path": str(archive), "password": "x"},
+            )
             with self.assertRaises(ValidationFailure) as error:
                 validate_document(document)
-            self.assertIn(error.exception.code, ("path_rejected", "wrong_password", "malformed_material"))
+            self.assertEqual(error.exception.code, "path_rejected")
 
-    def test_cli_failure_omits_secrets(self):
+    def test_cli_failure_omits_secrets_and_keeps_identity(self):
         request = {
-            "contract": "other",
+            "schemaVersion": 2,
+            "validationId": "val-fail",
+            "tenantId": "tenant",
+            "assetId": "asset",
+            "versionId": "version",
+            "kind": "android_keystore",
+            "toolchainSha": TOOLCHAIN,
             "password": "super-secret-value",
-            "material": {"privateKey": "BEGIN PRIVATE KEY"},
+            "material": {"privateKey": "BEGIN PRIVATE KEY", "password": "super-secret-value"},
         }
         result = subprocess.run(
             [sys.executable, "-m", "scripts.signing_validation"],
@@ -58,6 +75,8 @@ class LimitTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         body = json.loads(result.stdout)
         self.assertEqual(body["reasonCodes"], ["unsupported_input"])
+        self.assertEqual(body["validationId"], "val-fail")
+        self.assertEqual(body["status"], "invalid")
         rendered = result.stdout.decode() + result.stderr.decode()
         self.assertNotIn("super-secret-value", rendered)
         self.assertNotIn("BEGIN PRIVATE", rendered)

@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Fetch one authorized material envelope and post the public validation result.
+# The envelope and passwords stay in a mode-0600 file. They are not printed,
+# uploaded, or passed as process arguments.
+set -Eeuo pipefail
+set +x
+
+die() {
+  printf 'validate-material: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+[[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
+[[ "$HAWK_BASE_URL" == https://* ]] || die 'Hawk requires HTTPS'
+[[ -n "${VALIDATION_ID:-}" ]] || die 'VALIDATION_ID is required'
+[[ "$VALIDATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$ ]] || die 'VALIDATION_ID is invalid'
+[[ -n "${HAWK_VALIDATION_TOKEN:-}" ]] || die 'validation credential is required'
+[[ -n "${VALIDATOR_SHA:-}" ]] || die 'VALIDATOR_SHA is required'
+[[ "$VALIDATOR_SHA" =~ ^[0-9a-f]{40}$ ]] || die 'VALIDATOR_SHA is invalid'
+
+require_command curl
+require_command jq
+require_command python3
+
+BASE_URL=${HAWK_BASE_URL%/}
+umask 077
+WORK=$(mktemp -d "${RUNNER_TEMP:-/tmp}/signing-validation.XXXXXX")
+chmod 700 "$WORK"
+REQUEST="$WORK/request.json"
+RESULT="$WORK/result.json"
+cleanup() {
+  rm -f "$REQUEST" "$RESULT"
+  rmdir "$WORK" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+curl --fail --silent --show-error \
+  --header "Authorization: Bearer $HAWK_VALIDATION_TOKEN" \
+  --header 'Accept: application/json' \
+  --output "$REQUEST" \
+  "$BASE_URL/api/v1/buildbox/validations/$VALIDATION_ID/material"
+chmod 600 "$REQUEST"
+
+python3 - "$REQUEST" "$VALIDATOR_SHA" <<'PY'
+import json, sys
+path, expected = sys.argv[1], sys.argv[2]
+document = json.loads(open(path, "rb").read())
+if document.get("schemaVersion") != 1:
+    raise SystemExit("material schema is not version 1")
+if document.get("validationId") != __import__("os").environ["VALIDATION_ID"]:
+    raise SystemExit("material validation id does not match the job")
+if document.get("toolchainSha") != expected:
+    raise SystemExit("material toolchain SHA does not match the checkout")
+kind = document.get("kind")
+if kind not in ("android_keystore", "apple_certificate", "apple_profile"):
+    raise SystemExit("material kind is not supported")
+PY
+
+set +e
+python3 -m scripts.signing_validation <"$REQUEST" >"$RESULT"
+status=$?
+set -e
+chmod 600 "$RESULT"
+if [[ "$status" -ne 0 && "$status" -ne 2 ]]; then
+  die "validator exited $status"
+fi
+# Refuse to post a body that still carries the material envelope or a key.
+python3 - "$RESULT" <<'PY'
+import json, sys
+raw = open(sys.argv[1], "rb").read()
+if b"BEGIN PRIVATE" in raw or b"BEGIN CERTIFICATE" in raw or b"containerBase64" in raw:
+    raise SystemExit("validator result contains material")
+body = json.loads(raw)
+forbidden = {"password", "keyPassword", "privateKey", "containerBase64", "token", "secret"}
+def walk(value):
+    if isinstance(value, dict):
+        found = forbidden.intersection(value)
+        if found:
+            raise SystemExit("validator result contains a forbidden field")
+        for child in value.values():
+            walk(child)
+    elif isinstance(value, list):
+        for child in value:
+            walk(child)
+walk(body)
+PY
+
+curl --fail --silent --show-error \
+  --request POST \
+  --header "Authorization: Bearer $HAWK_VALIDATION_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: application/json' \
+  --data-binary @"$RESULT" \
+  --output /dev/null \
+  "$BASE_URL/api/v1/buildbox/validations/$VALIDATION_ID/result"
+
+python3 - "$RESULT" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1], "rb"))
+print("validation status=%s reasons=%s" % (body.get("status"), ",".join(body.get("reasonCodes") or [])))
+PY
+if [[ "$status" -ne 0 ]]; then
+  exit "$status"
+fi
