@@ -27,6 +27,7 @@ permissions:
   id-token: write
 jobs:
   finalize:
+    if: github.event.repository.private == true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -42,7 +43,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 74d5fdd0bf96426703cdc809f79ee9020b249e5d
+          ref: 9d0717314dbc602b7e302347f0c27125e6fab42e
           persist-credentials: false
 
       # Exchange before any artifact restore. A missing artifact must not block the callback.

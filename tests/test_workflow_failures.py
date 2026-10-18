@@ -51,9 +51,10 @@ class FinalizeFailureTests(unittest.TestCase):
         inputs = dict(prepare_result=prepare, compile_result=compile, sign_result=sign, failure_reason='fixture prepare failure')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            (root / 'event.json').write_text(json.dumps({'inputs': {'dispatch_proof': 'a' * 64}}))
             env = dict(os.environ, PATH=str(ROOT / 'tests/bin') + os.pathsep + os.environ['PATH'],
                 BUILDBOX_STATE_DIR=str(root / 'state'), RUNNER_TEMP=str(root), GITHUB_ENV=str(root / 'env'),
-                BUILDBOX_RUN_ID='401', BUILDBOX_GITHUB_RUN_ID='987654321',
+                GITHUB_EVENT_PATH=str(root / 'event.json'), BUILDBOX_RUN_ID='401', BUILDBOX_GITHUB_RUN_ID='987654321',
                 HAWK_BASE_URL='https://hawk.example', HAWK_OIDC_AUDIENCE='https://hawk.example/audience',
                 ACTIONS_ID_TOKEN_REQUEST_TOKEN='fixture-request', ACTIONS_ID_TOKEN_REQUEST_URL='https://oidc.example/token?request=1',
                 CURL_LOG=str(root / 'curl.log'), FIXTURE_DIR=str(ROOT / 'tests/fixtures'),

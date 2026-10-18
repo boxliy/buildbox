@@ -27,7 +27,10 @@ def validate_profile(profile, metadata, certificate):
         raise ValueError('profile identity, certificate or expiry mismatch')
     method = metadata['distributionMethod']
     # Store transport and enterprise distribution require separate authorization.
-    if method not in ('development', 'ad-hoc') or not profile.get('ProvisionedDevices'):
+    devices = profile.get('ProvisionedDevices')
+    if (method not in ('development', 'ad-hoc') or profile.get('ProvisionsAllDevices')
+            or not isinstance(devices, list) or not devices
+            or any(not isinstance(device, str) or not device for device in devices)):
         raise ValueError('only device-scoped development or ad-hoc profiles are supported')
     if bool(entitlements.get('get-task-allow')) != (method == 'development'):
         raise ValueError('profile distribution mismatch')
@@ -41,8 +44,8 @@ def validate_profile(profile, metadata, certificate):
     }
     capabilities = {item['key'] for item in metadata.get('deviceCapabilities', [])}
     supported = {'camera.capture', 'microphone.record', 'location.foreground',
-                 'location.background', 'notifications.push', 'storage.photos.read',
-                 'storage.photos.write', 'biometrics.authenticate', 'background.execution'}
+                 'location.background', 'notifications.push', 'photos.read',
+                 'photos.write', 'biometrics.authenticate', 'background.execution'}
     if not capabilities <= supported:
         raise ValueError('unsupported iOS native capability')
     if 'notifications.push' in capabilities:

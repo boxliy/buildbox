@@ -37,33 +37,34 @@ class SigningTests(unittest.TestCase):
                 signer.checked_zip(path)
 
     def test_real_jar_sign_verify_certificate_mismatch_and_tampering(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            key = root / "fixture.p12"
-            env = dict(os.environ, FIXTURE_PASSWORD="isolated-test-only")
-            subprocess.run(["keytool", "-genkeypair", "-alias", "fixture", "-keyalg", "RSA",
-                            "-keysize", "2048", "-dname", "CN=Isolated Test", "-validity", "2",
-                            "-storetype", "PKCS12", "-keystore", str(key),
-                            "-storepass:env", "FIXTURE_PASSWORD"], env=env, check=True, capture_output=True)
-            certificate = subprocess.run(["keytool", "-J-Duser.language=en", "-list", "-v", "-keystore", str(key),
-                            "-storepass:env", "FIXTURE_PASSWORD"], env=env, check=True, capture_output=True, text=True).stdout
-            fingerprint = re.search(r"SHA256:\s*([0-9A-F:]+)", certificate).group(1).replace(":", "").lower()
-            unsigned, signed = root / "unsigned.aab", root / "signed.aab"
-            with zipfile.ZipFile(unsigned, "w") as archive:
-                archive.writestr("base/manifest/AndroidManifest.xml", b"isolated-signature-test")
-            material = {"containerBase64": base64.b64encode(key.read_bytes()).decode(),
-                        "password": env["FIXTURE_PASSWORD"], "alias": "fixture"}
-            metadata = {"certificateSha256": fingerprint}
-            # This test exercises real JAR crypto. Bundle protobuf identity has separate tests.
-            with patch.object(signer, "verify_identity"):
-                signer.sign_one(unsigned, signed, "aab", metadata, material, root)
+        for algorithm, size in (("RSA", "2048"), ("EC", "256")):
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                key = root / "fixture.p12"
+                env = dict(os.environ, FIXTURE_PASSWORD="isolated-test-only")
+                subprocess.run(["keytool", "-genkeypair", "-alias", "fixture", "-keyalg", algorithm,
+                                "-keysize", size, "-dname", "CN=Isolated Test", "-validity", "2",
+                                "-storetype", "PKCS12", "-keystore", str(key),
+                                "-storepass:env", "FIXTURE_PASSWORD"], env=env, check=True, capture_output=True)
+                certificate = subprocess.run(["keytool", "-J-Duser.language=en", "-list", "-v", "-keystore", str(key),
+                                "-storepass:env", "FIXTURE_PASSWORD"], env=env, check=True, capture_output=True, text=True).stdout
+                fingerprint = re.search(r"SHA256:\s*([0-9A-F:]+)", certificate).group(1).replace(":", "").lower()
+                unsigned, signed = root / "unsigned.aab", root / "signed.aab"
+                with zipfile.ZipFile(unsigned, "w") as archive:
+                    archive.writestr("base/manifest/AndroidManifest.xml", b"isolated-signature-test")
+                material = {"containerBase64": base64.b64encode(key.read_bytes()).decode(),
+                            "password": env["FIXTURE_PASSWORD"], "alias": "fixture"}
+                metadata = {"certificateSha256": fingerprint}
+                # This test exercises real JAR crypto. Bundle protobuf identity has separate tests.
+                with patch.object(signer, "verify_identity"):
+                    signer.sign_one(unsigned, signed, "aab", metadata, material, root)
+                    with self.assertRaises(ValueError):
+                        signer.sign_one(unsigned, root / "wrong.aab", "aab",
+                                        {"certificateSha256": "0" * 64}, material, root)
+                with zipfile.ZipFile(signed, "a") as archive:
+                    archive.writestr("base/manifest/AndroidManifest.xml", b"tampered")
                 with self.assertRaises(ValueError):
-                    signer.sign_one(unsigned, root / "wrong.aab", "aab",
-                                    {"certificateSha256": "0" * 64}, material, root)
-            with zipfile.ZipFile(signed, "a") as archive:
-                archive.writestr("base/manifest/AndroidManifest.xml", b"tampered")
-            with self.assertRaises(ValueError):
-                signer.run(["jarsigner", "-verify", str(signed)])
+                    signer.run(["jarsigner", "-verify", str(signed)])
 
     def test_apk_identity_must_match_all_frozen_fields(self):
         metadata = {"applicationIdentifier": "com.example.app", "buildNumber": 12, "versionName": "1.2.3"}
@@ -77,3 +78,36 @@ class SigningTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class KeyAlgorithmPolicyTests(unittest.TestCase):
+    def test_unsupported_key_algorithm_is_rejected_before_signing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'unsigned.aab'
+            with zipfile.ZipFile(source, 'w') as archive:
+                archive.writestr('base/manifest/AndroidManifest.xml', b'fixture')
+            material = {'containerBase64': base64.b64encode(b'fixture').decode(), 'password': 'fixture', 'alias': 'fixture'}
+            def command(args, env=None):
+                if '-text' in args:
+                    return 'Public Key Algorithm: dsaEncryption'
+                return ''
+            with patch.object(signer, 'verify_identity'), patch.object(signer, 'run', side_effect=command) as commands:
+                with self.assertRaisesRegex(ValueError, 'unsupported signing key algorithm'):
+                    signer.sign_one(source, root / 'signed.aab', 'aab', {'certificateSha256': 'a' * 64}, material, root)
+                self.assertFalse(any(call.args[0][0] == 'jarsigner' for call in commands.call_args_list))
+
+    def test_aab_identity_checks_package_and_both_versions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            jar = Path(directory) / 'bundletool.jar'
+            jar.write_bytes(b'isolated-tool')
+            import hashlib
+            metadata = {'applicationIdentifier': 'com.example.app', 'buildNumber': 12, 'versionName': '1.2.3'}
+            with patch.dict(os.environ, BUILDBOX_BUNDLETOOL_JAR=str(jar), BUILDBOX_BUNDLETOOL_SHA256=hashlib.sha256(jar.read_bytes()).hexdigest()):
+                for package, number, name in [('com.example.app','12','1.2.3'), ('com.other.app','12','1.2.3'), ('com.example.app','11','1.2.3'), ('com.example.app','12','1.2.2')]:
+                    xml = f'<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="{package}" android:versionCode="{number}" android:versionName="{name}"/>'
+                    with patch.object(signer, 'run', return_value=xml):
+                        if (package,number,name) == ('com.example.app','12','1.2.3'):
+                            signer.verify_identity(Path('fixture.aab'), 'aab', metadata)
+                        else:
+                            with self.assertRaisesRegex(ValueError, 'AAB identity or version mismatch'):
+                                signer.verify_identity(Path('fixture.aab'), 'aab', metadata)

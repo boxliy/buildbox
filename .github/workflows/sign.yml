@@ -18,6 +18,7 @@ permissions:
   id-token: write
 jobs:
   sign:
+    if: github.event.repository.private == true
     runs-on: ${{ inputs.platform == 'ios' && 'macos-15' || 'ubuntu-24.04' }}
     timeout-minutes: 30
     permissions:
@@ -34,7 +35,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 74d5fdd0bf96426703cdc809f79ee9020b249e5d
+          ref: 9d0717314dbc602b7e302347f0c27125e6fab42e
           persist-credentials: false
 
       - name: Setup trusted Python

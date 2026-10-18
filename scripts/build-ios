@@ -43,8 +43,8 @@ usage={
  'microphone.record': ('NSMicrophoneUsageDescription', 'microphone'),
  'location.foreground': ('NSLocationWhenInUseUsageDescription', 'location'),
  'location.background': ('NSLocationAlwaysAndWhenInUseUsageDescription', 'background location'),
- 'storage.photos.read': ('NSPhotoLibraryUsageDescription', 'photo library'),
- 'storage.photos.write': ('NSPhotoLibraryAddUsageDescription', 'photo library'),
+ 'photos.read': ('NSPhotoLibraryUsageDescription', 'photo library'),
+ 'photos.write': ('NSPhotoLibraryAddUsageDescription', 'photo library'),
  'biometrics.authenticate': ('NSFaceIDUsageDescription', 'biometric authentication'),
 }
 if not capabilities <= set(usage) | {'notifications.push', 'background.execution'}:
