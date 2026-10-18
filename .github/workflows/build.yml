@@ -53,7 +53,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 5be050656e1166452b4c6772fe7df4257f26dc05
+          ref: 6eefd9071b6cbf2a20c761eeb98d959880dcd3a6
           persist-credentials: false
 
       - name: Restore compile inputs
