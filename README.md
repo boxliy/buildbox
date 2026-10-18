@@ -57,6 +57,17 @@ theme and FTL resources; the branding tool generates native icons/launch images.
 Android permissions and iOS usage descriptions derive from the fixed capabilities;
 unsupported capabilities fail rather than silently using default Swan branding.
 
+## Material validation
+
+`scripts/signing_validation` checks one authorized keystore, Apple certificate,
+or provisioning profile. It does not compile or sign an app. The offline
+contract is `signing-material-validation/v1`. The controlled job translates
+Hawk schema version 1. Android `status: valid` requires the private-key
+challenge. Apple `status: valid` also requires chain trust that actually ran,
+and a profile requires a CMS signature check. Finding macOS tools does not
+count as running them. A Linux parse is not Apple trust.
+See `scripts/signing_validation/README.md`.
+
 ## Signing and artifacts
 
 APK uses `zipalign` and `apksigner`, verifies certificate, package and version.
@@ -81,6 +92,17 @@ refresh permits identical receipts only, not another upload. Hard cancellation
 can prevent `always()` execution; Hawk's leased reconciliation handles lost
 callbacks and external run outcomes. Successful Actions without trusted artifacts
 never become downloadable.
+
+## Signing material validation
+
+`scripts/signing_validation/` validates one authorized Android keystore or Apple
+certificate/profile. It does not compile or sign an app. The JSON contract is
+`signing-material-validation/v1`; see `scripts/signing_validation/README.md`.
+`validate-signing-material.yml` accepts only a platform `validation_id` on a
+private repository. Hawk's material fetch is not called until AVIARY-88
+releases that API. OpenSSL CMS decode is not Apple trust. macOS
+`security`/`codesign` checks stay in Apple `evidence.notExecuted` until they
+run. A proven Android private-key challenge does not carry those checks.
 
 ## Checks and acceptance limits
 

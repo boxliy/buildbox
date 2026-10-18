@@ -1,0 +1,38 @@
+name: Validate material caller
+
+# Fixed private caller. The only inputs are a validation id, a dispatch proof,
+# and the Hawk base URL. Material and passwords are never workflow inputs.
+# The reusable workflow SHA and validator_sha name the commit that contains
+# scripts/signing_validation. They stay equal and move together.
+on:
+  workflow_dispatch:
+    inputs:
+      validation_id:
+        description: Platform validation id
+        required: true
+        type: string
+      dispatch_proof:
+        description: One-time Hawk validation dispatch proof
+        required: true
+        type: string
+      hawk_base_url:
+        description: Hawk HTTPS origin authorized for this validation
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'workflow_dispatch' && github.event.repository.private == true
+    permissions:
+      contents: read
+      id-token: write
+    uses: boxliy/buildbox/.github/workflows/validate-signing-material.yml@3e62876b2a285a2750f1ad4a2c321126515b1986
+    secrets:
+      HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+    with:
+      validation_id: ${{ inputs.validation_id }}
+      hawk_base_url: ${{ inputs.hawk_base_url }}
+      validator_sha: 3e62876b2a285a2750f1ad4a2c321126515b1986

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Exchange a GitHub Actions OIDC token for one validation credential.
+# A compile or sign stage token is not accepted. The credential stays in
+# GITHUB_ENV. Stdout is limited to the Actions secret-masking command.
+set -Eeuo pipefail
+set +x
+
+die() {
+  printf 'exchange-validation: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+[[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
+[[ "$HAWK_BASE_URL" == https://* ]] || die 'Hawk requires HTTPS'
+[[ -n "${VALIDATION_ID:-}" ]] || die 'VALIDATION_ID is required'
+[[ "$VALIDATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$ ]] || die 'VALIDATION_ID is invalid'
+[[ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" && -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]] \
+  || die 'GitHub Actions OIDC request is required'
+[[ -n "${GITHUB_ENV:-}" ]] || die 'GITHUB_ENV is required'
+[[ -n "${HAWK_OIDC_AUDIENCE:-}" ]] || die 'HAWK_OIDC_AUDIENCE is required'
+
+require_command curl
+require_command jq
+
+AUDIENCE=$(printf '%s' "$HAWK_OIDC_AUDIENCE" | jq -sRr @uri)
+OIDC_RESPONSE=$(curl --fail --silent --show-error \
+  --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+  "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}")
+OIDC_TOKEN=$(printf '%s' "$OIDC_RESPONSE" | jq -er '.value | select(type == "string" and length > 0)') \
+  || die 'GitHub did not return an OIDC token'
+
+DISPATCH_PROOF=$(jq -r '.inputs.dispatch_proof // ""' "${GITHUB_EVENT_PATH:?}")
+[[ "$DISPATCH_PROOF" =~ ^[0-9a-f]{64}$ ]] || die 'invalid dispatch proof'
+printf '::add-mask::%s\n' "$DISPATCH_PROOF"
+
+BASE_URL=${HAWK_BASE_URL%/}
+EXCHANGE_BODY=$(jq -nc \
+  --arg oidcToken "$OIDC_TOKEN" \
+  --arg dispatchProof "$DISPATCH_PROOF" \
+  '{oidcToken: $oidcToken, dispatchProof: $dispatchProof}')
+RESPONSE=$(curl --fail --silent --show-error \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: application/json' \
+  --data-binary "$EXCHANGE_BODY" \
+  "$BASE_URL/api/v1/buildbox/validations/$VALIDATION_ID/auth/exchange")
+TOKEN=$(printf '%s' "$RESPONSE" | jq -er '.token | select(type == "string" and length > 0)') \
+  || die 'Hawk did not return a validation credential'
+
+printf '::add-mask::%s\n' "$TOKEN"
+umask 077
+if grep -q '^HAWK_VALIDATION_TOKEN=' "$GITHUB_ENV"; then
+  grep -v '^HAWK_VALIDATION_TOKEN=' "$GITHUB_ENV" >"$GITHUB_ENV.next"
+  mv "$GITHUB_ENV.next" "$GITHUB_ENV"
+fi
+printf 'HAWK_VALIDATION_TOKEN=%s\n' "$TOKEN" >>"$GITHUB_ENV"
+printf 'exchanged validation credential for %s\n' "$VALIDATION_ID"
