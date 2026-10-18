@@ -6,25 +6,21 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from scripts.signing_validation.contract import FORBIDDEN_RESULT_KEYS, SCHEMA_VERSION
+from scripts.signing_validation.contract import CONTRACT_VERSION, FORBIDDEN_RESULT_KEYS
 from scripts.signing_validation.outcome import ValidationFailure
 from scripts.signing_validation.validate import validate_document
 
-TOOLCHAIN = "0123456789abcdef0123456789abcdef01234567"
-
-
-def envelope(kind, **extra):
+def envelope(platform, kind, scope_kind, **extra):
     document = {
-        "schemaVersion": SCHEMA_VERSION,
-        "validationId": "val",
-        "tenantId": "t",
-        "assetId": "a",
-        "versionId": "v",
-        "kind": kind,
-        "toolchainSha": TOOLCHAIN,
+        "contract": CONTRACT_VERSION,
         "evaluatedAt": "2026-06-01T00:00:00Z",
+        "platform": platform,
+        "kind": kind,
+        "scope": {
+            "validationId": "val", "tenantId": "t", "assetId": "a", "versionId": "v",
+            "kind": scope_kind, "stage": "validate",
+        },
         "material": {},
-        "expected": {},
     }
     document.update(extra)
     return document
@@ -33,11 +29,11 @@ def envelope(kind, **extra):
 class LimitTests(unittest.TestCase):
     def test_scope_rejects_sign_stage_and_kind_mismatch(self):
         document = envelope(
-            "android_keystore",
-            stage="sign",
-            expected={"purpose": "direct_distribution", "storeType": "PKCS12"},
-            material={"path": "unused", "password": "x", "keyPassword": "x"},
+            "android", None, "android_keystore",
+            purpose="direct_distribution", storeType="PKCS12",
+            material={"path": "unused", "storePassword": "x", "keyPassword": "x"},
         )
+        document["scope"]["stage"] = "sign"
         with self.assertRaises(ValidationFailure) as error:
             validate_document(document)
         self.assertEqual(error.exception.code, "scope_mismatch")
@@ -48,7 +44,7 @@ class LimitTests(unittest.TestCase):
             with zipfile.ZipFile(archive, "w") as handle:
                 handle.writestr("../outside", b"x")
             document = envelope(
-                "apple_certificate",
+                "ios", "certificate", "apple_certificate",
                 material={"path": str(archive), "password": "x"},
             )
             with self.assertRaises(ValidationFailure) as error:
@@ -57,14 +53,12 @@ class LimitTests(unittest.TestCase):
 
     def test_cli_failure_omits_secrets_and_keeps_identity(self):
         request = {
-            "schemaVersion": 2,
-            "validationId": "val-fail",
-            "tenantId": "tenant",
-            "assetId": "asset",
-            "versionId": "version",
-            "kind": "android_keystore",
-            "toolchainSha": TOOLCHAIN,
+            "contract": "other",
             "password": "super-secret-value",
+            "scope": {
+                "validationId": "val-fail", "tenantId": "tenant", "assetId": "asset",
+                "versionId": "version", "kind": "android_keystore", "stage": "validate",
+            },
             "material": {"privateKey": "BEGIN PRIVATE KEY", "password": "super-secret-value"},
         }
         result = subprocess.run(
@@ -75,7 +69,7 @@ class LimitTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         body = json.loads(result.stdout)
         self.assertEqual(body["reasonCodes"], ["unsupported_input"])
-        self.assertEqual(body["validationId"], "val-fail")
+        self.assertEqual(body["scope"]["validationId"], "val-fail")
         self.assertEqual(body["status"], "invalid")
         rendered = result.stdout.decode() + result.stderr.decode()
         self.assertNotIn("super-secret-value", rendered)

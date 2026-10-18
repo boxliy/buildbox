@@ -60,9 +60,10 @@ unsupported capabilities fail rather than silently using default Swan branding.
 ## Material validation
 
 `scripts/signing_validation` checks one authorized keystore, Apple certificate,
-or provisioning profile. It does not compile or sign an app. The request and
-result use Hawk schema version 1. `status: valid` requires the macOS trust
-checks in `validate-signing-material.yml`; a Linux parse is not trust.
+or provisioning profile. It does not compile or sign an app. The offline
+contract is `signing-material-validation/v1`. The controlled job translates
+Hawk schema version 1. `status: valid` requires the macOS trust checks in
+`validate-signing-material.yml`; a Linux parse is not trust.
 See `scripts/signing_validation/README.md`.
 
 ## Signing and artifacts

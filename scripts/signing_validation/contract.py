@@ -1,12 +1,12 @@
-"""Hawk signing-material validation envelope, schema version 1.
+"""Offline signing-material validation contract.
 
-The runner accepts the JSON Hawk returns from GET /material and writes the
-JSON Hawk accepts on POST /result. Passwords and private material never appear
-in the result object. This module does not fetch credentials, compile an app,
-or sign a product.
+Hawk (AVIARY-88) accepted this offline shape. The controlled job translates
+it to and from the Hawk HTTP envelope. Passwords and private material never
+appear in the result object. This module does not fetch credentials, compile
+an app, or sign a product.
 """
 
-SCHEMA_VERSION = 1
+CONTRACT_VERSION = "signing-material-validation/v1"
 VALIDATOR_VERSION = "1.1.0"
 
 MAX_MATERIAL_BYTES = 2 * 1024 * 1024
@@ -19,9 +19,10 @@ MAX_ZIP_ENTRIES = 64
 MAX_EXPANDED_BYTES = 4 * 1024 * 1024
 TOOL_TIMEOUT_SECONDS = 20
 
-KINDS = ("android_keystore", "apple_certificate", "apple_profile")
+PLATFORMS = ("android", "ios")
 ANDROID_PURPOSES = ("direct_distribution", "play_upload")
 ANDROID_FORMATS = ("JKS", "PKCS12")
+APPLE_KINDS = ("certificate", "provisioning_profile")
 APPLE_DISTRIBUTIONS = ("development", "ad_hoc", "enterprise", "app_store")
 PUBLIC_KEY_ALGORITHMS = ("RSA", "EC")
 

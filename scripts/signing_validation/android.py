@@ -47,19 +47,18 @@ _ALIAS_HEADER = re.compile(r"(?m)^Alias name:\s*(.+)$")
 def validate(request, evaluated_at):
     if not which("keytool") or not which("openssl"):
         raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "android validation requires keytool and openssl")
-    expected = request.get("expected") if isinstance(request.get("expected"), dict) else {}
-    purpose = expected.get("purpose")
+    purpose = request.get("purpose")
     if purpose not in ANDROID_PURPOSES:
         raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "android purpose is not supported")
-    store_type = expected.get("storeType")
+    store_type = request.get("storeType")
     if store_type not in ANDROID_FORMATS:
         raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "android store type is not supported")
     material = request.get("material") or {}
-    password = bounded_password(material.get("password"), "password")
-    key_password = bounded_password(material.get("keyPassword") or material.get("password"), "keyPassword")
+    password = bounded_password(material.get("storePassword"), "storePassword")
+    key_password = bounded_password(material.get("keyPassword") or material.get("storePassword"), "keyPassword")
     data = _material_bytes(material)
     _classify_container(data, store_type)
-    alias = expected.get("alias")
+    alias = material.get("alias")
     if alias is not None:
         alias = safe_name(alias, "alias")
     with tempfile.TemporaryDirectory(prefix="android-material-") as temporary:
@@ -71,27 +70,38 @@ def validate(request, evaluated_at):
         selected = _select(aliases, alias)
         chain = _chain(keystore, store_type, selected, env)
         _confirm_private_key(keystore, store_type, selected, env, chain[0])
-    entries = [_alias_entry(name, chain if name == selected else None, evaluated_at, purpose) for name in aliases]
+    entries = [_alias_entry(name, chain if name == selected else None, evaluated_at) for name in aliases]
     selected_entry = next(item for item in entries if item["alias"] == selected)
-    reasons = [selected_entry.pop("_validity")]
-    metadata = {
-        "aliases": entries,
-        "selectedAlias": selected,
+    reasons = [selected_entry.get("_validity") or REASON_OK]
+    private_key_proven = selected_entry.get("signingCapable") is True
+    for item in entries:
+        item.pop("_validity", None)
+    return {
+        "platform": "android",
         "purpose": purpose,
         "storeType": store_type,
-        "materialSha256": digest_bytes(data),
-        "playAppSigningIdentity": False,
-        "installable": False,
-        "trustedByPlatform": False,
+        "status": "valid" if reasons == [REASON_OK] else "invalid",
+        "reasonCodes": reasons,
+        "selectedAlias": selected,
+        "aliasCount": len(aliases),
+        "aliases": entries,
+        "evidence": {
+            "materialSha256": digest_bytes(data),
+            "challenge": "detached-rsa-or-ecdsa-v1",
+            "privateKeyProven": private_key_proven,
+            "chainTrusted": False,
+            "playAppSigningIdentity": False,
+            "installable": False,
+            "trustedByPlatform": False,
+        },
     }
-    return metadata, reasons
 
 
 def _material_bytes(material):
     import base64
     if "path" in material:
         return bounded_file(material["path"])
-    encoded = material.get("containerBase64")
+    encoded = material.get("bytesBase64")
     if not isinstance(encoded, str):
         raise ValidationFailure(REASON_MALFORMED_MATERIAL, "android material is missing")
     try:
@@ -273,7 +283,7 @@ def _challenge(private_pem, certificate):
     raise ValidationFailure(REASON_UNSUPPORTED_ALGORITHM, "private key algorithm is not supported")
 
 
-def _alias_entry(alias, chain, evaluated_at, purpose):
+def _alias_entry(alias, chain, evaluated_at):
     if chain is None:
         return {
             "alias": alias,
@@ -282,7 +292,7 @@ def _alias_entry(alias, chain, evaluated_at, purpose):
             "expiresAt": None,
             "algorithm": None,
             "signingCapable": False,
-            "purpose": purpose,
+            "purpose": "signing",
             "chainLength": None,
             "chainSha256": [],
             "_validity": REASON_OK,
@@ -307,7 +317,7 @@ def _alias_entry(alias, chain, evaluated_at, purpose):
         "expiresAt": instant(leaf.not_valid_after_utc),
         "algorithm": algorithm,
         "signingCapable": state is None,
-        "purpose": purpose,
+        "purpose": "signing",
         "chainLength": len(chain),
         "chainSha256": [item.fingerprint(hashes.SHA256()).hex() for item in chain],
         "_validity": state or REASON_OK,

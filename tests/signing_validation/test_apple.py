@@ -6,43 +6,39 @@ from pathlib import Path
 from cryptography.hazmat.primitives import hashes
 
 from tests.signing_validation import fixtures
-from scripts.signing_validation.contract import SCHEMA_VERSION
+from scripts.signing_validation.contract import CONTRACT_VERSION
 from scripts.signing_validation.outcome import ValidationFailure
 from scripts.signing_validation.validate import validate_document
 
 
 WHEN = "2026-06-01T16:00:00Z"
 UTC = datetime.timezone.utc
-TOOLCHAIN = "0123456789abcdef0123456789abcdef01234567"
 
 
-def identity(kind):
+def scope(kind):
     return {
-        "schemaVersion": SCHEMA_VERSION,
-        "validationId": "val-ios",
-        "tenantId": "tenant-1",
-        "assetId": "asset-1",
-        "versionId": "version-1",
-        "kind": kind,
-        "toolchainSha": TOOLCHAIN,
-        "evaluatedAt": WHEN,
+        "validationId": "val-ios", "tenantId": "tenant-1", "assetId": "asset-1",
+        "versionId": "version-1", "kind": kind, "stage": "validate",
     }
 
 
 class AppleMaterialTests(unittest.TestCase):
     def certificate_request(self, path, password=fixtures.PASSWORD):
         return {
-            **identity("apple_certificate"),
+            "contract": CONTRACT_VERSION, "evaluatedAt": WHEN, "platform": "ios",
+            "kind": "certificate", "scope": scope("apple_certificate"),
             "material": {"path": str(path), "password": password},
-            "expected": {},
         }
 
-    def profile_request(self, path, expected=None):
-        return {
-            **identity("apple_profile"),
+    def profile_request(self, path, expectations=None):
+        document = {
+            "contract": CONTRACT_VERSION, "evaluatedAt": WHEN, "platform": "ios",
+            "kind": "provisioning_profile", "scope": scope("apple_profile"),
             "material": {"path": str(path)},
-            "expected": expected or {},
         }
+        if expectations:
+            document["expectations"] = expectations
+        return document
 
     def signed_profile(self, directory, distribution, **kwargs):
         key, signer = fixtures.rsa_key(), fixtures.rsa_key()
@@ -64,10 +60,12 @@ class AppleMaterialTests(unittest.TestCase):
                 self.assertEqual(result["status"], "invalid", name)
                 self.assertIn("macos_capability_unavailable", result["reasonCodes"])
                 self.assertNotIn("ok", result["reasonCodes"])
-                self.assertEqual(result["metadata"]["algorithm"], "RSA" if name.startswith("rsa") else "EC")
-                self.assertEqual(result["metadata"]["teamId"], "TEAM123456")
-                self.assertTrue(result["metadata"]["signingCapable"])
-                self.assertFalse(result["metadata"]["trustedByPlatform"])
+                self.assertEqual(result["certificate"]["algorithm"], "RSA" if name.startswith("rsa") else "EC")
+                self.assertEqual(result["certificate"]["teamId"], "TEAM123456")
+                self.assertTrue(result["certificate"]["signingCapable"])
+                self.assertTrue(result["evidence"]["privateKeyProven"])
+                self.assertFalse(result["evidence"]["chainTrusted"])
+                self.assertFalse(result["evidence"]["trustedByPlatform"])
                 self.assertFalse(result["evidence"]["installable"])
                 self.assertIn("security_cms_anchor_verify", result["evidence"]["notExecuted"])
             with self.assertRaises(ValidationFailure) as wrong:
@@ -106,7 +104,7 @@ class AppleMaterialTests(unittest.TestCase):
             for distribution, options in cases.items():
                 path, leaf = self.signed_profile(directory, distribution, **options)
                 result = validate_document(self.profile_request(path, {
-                    "teamId": "TEAM123456", "bundleId": "com.example.app", "distributionMethod": distribution,
+                    "teamId": "TEAM123456", "bundleId": "com.example.app", "distribution": distribution,
                     "certificateSha256": leaf.fingerprint(hashes.SHA256()).hex(),
                     "entitlements": {
                         "application-identifier": "TEAM123456.com.example.app",
@@ -116,10 +114,11 @@ class AppleMaterialTests(unittest.TestCase):
                 }))
                 self.assertEqual(result["status"], "invalid", distribution)
                 self.assertEqual(result["reasonCodes"], ["macos_capability_unavailable"])
-                self.assertEqual(result["metadata"]["distributionMethod"], distribution)
-                self.assertEqual(result["metadata"]["uuid"], "11111111-2222-3333-4444-555555555555")
-                self.assertIn("get-task-allow", result["metadata"]["entitlements"])
-                self.assertFalse(result["metadata"]["cmsTrusted"])
+                self.assertEqual(result["profile"]["distribution"], distribution)
+                self.assertEqual(result["profile"]["uuid"], "11111111-2222-3333-4444-555555555555")
+                self.assertIn("get-task-allow", result["profile"]["entitlements"])
+                self.assertFalse(result["evidence"]["cmsSignatureVerified"])
+                self.assertTrue(result["evidence"]["cmsParsed"])
             # 2026-06-01T16:00:00Z is 2026-06-02 in Asia/Taipei.
             boundary, _leaf = self.signed_profile(
                 directory, "development", devices=["device-1"],
@@ -129,7 +128,7 @@ class AppleMaterialTests(unittest.TestCase):
             self.assertIn("profile_not_yet_valid", result["reasonCodes"])
             result = validate_document({**self.profile_request(boundary), "evaluatedAt": "2026-06-02T16:00:00Z"})
             self.assertIn("profile_expired", result["reasonCodes"])
-            self.assertEqual(result["metadata"]["expiresAt"], "2026-06-02T16:00:00Z")
+            self.assertEqual(result["profile"]["expiresAt"], "2026-06-02T16:00:00Z")
 
     def test_rejects_tamper_team_bundle_and_claimed_type(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -141,7 +140,7 @@ class AppleMaterialTests(unittest.TestCase):
             self.assertEqual(broken.exception.code, "cms_invalid")
             path.write_bytes(data)
             mismatched = validate_document(self.profile_request(path, {
-                "teamId": "OTHERTEAM1", "bundleId": "com.other.app", "distributionMethod": "app_store",
+                "teamId": "OTHERTEAM1", "bundleId": "com.other.app", "distribution": "app_store",
                 "certificateSha256": "ab" * 32,
                 "entitlements": {"aps-environment": "production", "get-task-allow": True},
             }))
@@ -151,8 +150,8 @@ class AppleMaterialTests(unittest.TestCase):
             self.assertIn("distribution_mismatch", mismatched["reasonCodes"])
             self.assertIn("certificate_mismatch", mismatched["reasonCodes"])
             self.assertIn("entitlements_mismatch", mismatched["reasonCodes"])
-            self.assertEqual(mismatched["metadata"]["distributionMethod"], "ad_hoc")
-            self.assertEqual(mismatched["metadata"]["entitlements"]["get-task-allow"], False)
+            self.assertEqual(mismatched["profile"]["distribution"], "ad_hoc")
+            self.assertEqual(mismatched["profile"]["entitlements"]["get-task-allow"], False)
 
 
 if __name__ == "__main__":

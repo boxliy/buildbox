@@ -18,6 +18,7 @@ from cryptography.x509.oid import NameOID
 
 from .contract import (
     APPLE_DISTRIBUTIONS,
+    APPLE_KINDS,
     MAX_DEVICES,
     MAX_PLIST_BYTES,
     PUBLIC_KEY_ALGORITHMS,
@@ -46,7 +47,16 @@ from .time_basis import as_utc, instant, validity
 from .tools import digest_bytes, run, which
 
 
-def validate_certificate(request, evaluated_at):
+def validate(request, evaluated_at):
+    kind = request.get("kind")
+    if kind not in APPLE_KINDS:
+        raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "apple material kind is not supported")
+    if kind == "certificate":
+        return _certificate(request, evaluated_at)
+    return _profile(request, evaluated_at)
+
+
+def _certificate(request, evaluated_at):
     if not which("openssl"):
         raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "apple certificate validation requires openssl")
     material = request.get("material") or {}
@@ -77,14 +87,25 @@ def validate_certificate(request, evaluated_at):
     certificate = _leaf(pem)
     _match_key(key_pem, certificate)
     metadata = _certificate_metadata(certificate, evaluated_at)
-    metadata["materialSha256"] = digest_bytes(data)
-    metadata["installable"] = False
-    metadata["trustedByPlatform"] = False
-    reasons = [metadata.pop("validity")]
-    return metadata, reasons
+    state = metadata.pop("validity")
+    return {
+        "platform": "ios",
+        "kind": "certificate",
+        "status": "valid" if state == REASON_OK else "invalid",
+        "reasonCodes": [state],
+        "certificate": metadata,
+        "evidence": {
+            "materialSha256": digest_bytes(data),
+            "privateKeyProven": metadata.get("signingCapable") is True,
+            "chainTrusted": False,
+            "cmsSignatureVerified": False,
+            "installable": False,
+            "trustedByPlatform": False,
+        },
+    }
 
 
-def validate_profile(request, evaluated_at):
+def _profile(request, evaluated_at):
     if not which("openssl"):
         raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "profile validation requires openssl")
     material = request.get("material") or {}
@@ -102,23 +123,32 @@ def validate_profile(request, evaluated_at):
     if not isinstance(profile, dict):
         raise ValidationFailure(REASON_CMS_INVALID, "profile payload is not an object")
     derived = _derive(profile, evaluated_at)
-    expected = request.get("expected") if isinstance(request.get("expected"), dict) else {}
-    mismatches = _compare(profile, derived, expected)
+    expectations = request.get("expectations") if isinstance(request.get("expectations"), dict) else {}
+    mismatches = _compare(profile, derived, expectations)
     reasons = list(derived["reasonCodes"])
     reasons.extend(mismatches)
     if REASON_OK in reasons and len(reasons) > 1:
         reasons = [code for code in reasons if code != REASON_OK]
-    metadata = {
-        **derived["profile"],
-        "materialSha256": digest_bytes(data),
-        "cmsDigestSha256": digest_bytes(cms),
-        "payloadSha256": digest_bytes(plist_bytes),
-        "cmsParsed": True,
-        "cmsTrusted": False,
-        "installable": False,
-        "trustedByPlatform": False,
+    status = "valid" if reasons == [REASON_OK] else "invalid"
+    return {
+        "platform": "ios",
+        "kind": "provisioning_profile",
+        "status": status,
+        "reasonCodes": reasons,
+        "profile": derived["profile"],
+        "evidence": {
+            "materialSha256": digest_bytes(data),
+            "cmsDigestSha256": digest_bytes(cms),
+            "payloadSha256": digest_bytes(plist_bytes),
+            "privateKeyProven": False,
+            "chainTrusted": False,
+            "cmsSignatureVerified": False,
+            "cmsParsed": True,
+            "installable": False,
+            "trustedByPlatform": False,
+            "claimedDistributionIgnored": expectations.get("distribution") not in (None, derived["profile"]["distribution"]),
+        },
     }
-    return metadata, reasons
 
 
 def _decode_cms(data):
@@ -250,8 +280,8 @@ def _derive(profile, evaluated_at):
             "uuid": profile.get("UUID") if isinstance(profile.get("UUID"), str) else None,
             "teamId": team,
             "applicationIdentifier": application if isinstance(application, str) else None,
-            "distributionMethod": distribution,
-            "certificateSha256s": fingerprints,
+            "distribution": distribution,
+            "developerCertificateSha256": fingerprints,
             "entitlements": entitlements,
             "expiresAt": instant(expires) if expires else None,
             "bundleId": bundle,
@@ -300,12 +330,12 @@ def _compare(profile, derived, expected):
     expected_bundle = expected.get("bundleId")
     if expected_bundle is not None and expected_bundle != facts["bundleId"]:
         found.append(REASON_BUNDLE_MISMATCH)
-    expected_distribution = expected.get("distributionMethod", expected.get("distribution"))
+    expected_distribution = expected.get("distribution")
     if expected_distribution is not None:
-        if expected_distribution not in APPLE_DISTRIBUTIONS or expected_distribution != facts["distributionMethod"]:
+        if expected_distribution not in APPLE_DISTRIBUTIONS or expected_distribution != facts["distribution"]:
             found.append(REASON_DISTRIBUTION_MISMATCH)
     expected_cert = expected.get("certificateSha256")
-    if expected_cert is not None and expected_cert not in facts["certificateSha256s"]:
+    if expected_cert is not None and expected_cert not in facts["developerCertificateSha256"]:
         found.append(REASON_CERTIFICATE_MISMATCH)
     expected_entitlements = expected.get("entitlements")
     if expected_entitlements is not None:
@@ -344,7 +374,7 @@ def _material_bytes(material):
     import base64
     if "path" in material:
         return bounded_file(material["path"])
-    encoded = material.get("containerBase64")
+    encoded = material.get("bytesBase64")
     if not isinstance(encoded, str):
         raise ValidationFailure(REASON_MALFORMED_MATERIAL, "apple material is missing")
     try:

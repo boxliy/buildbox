@@ -5,37 +5,33 @@ import unittest
 from pathlib import Path
 
 from tests.signing_validation import fixtures
-from scripts.signing_validation.contract import SCHEMA_VERSION
+from scripts.signing_validation.contract import CONTRACT_VERSION
 from scripts.signing_validation.validate import validate_document
 from scripts.signing_validation.outcome import ValidationFailure
 
 
 WHEN = "2026-06-01T00:00:00Z"
-TOOLCHAIN = "0123456789abcdef0123456789abcdef01234567"
-
-
-def identity(kind="android_keystore"):
+def scope(kind="android_keystore"):
     return {
-        "schemaVersion": SCHEMA_VERSION,
-        "validationId": "val-1",
-        "tenantId": "tenant-1",
-        "assetId": "asset-1",
-        "versionId": "version-1",
-        "kind": kind,
-        "toolchainSha": TOOLCHAIN,
-        "evaluatedAt": WHEN,
+        "validationId": "val-1", "tenantId": "tenant-1", "assetId": "asset-1",
+        "versionId": "version-1", "kind": kind, "stage": "validate",
     }
 
 
 class AndroidMaterialTests(unittest.TestCase):
     def request(self, path, purpose="direct_distribution", store_type="PKCS12", alias="release", password=fixtures.PASSWORD, key_password=None):
         return {
-            **identity(),
-            "expected": {"purpose": purpose, "storeType": store_type, "alias": alias},
+            "contract": CONTRACT_VERSION,
+            "evaluatedAt": WHEN,
+            "platform": "android",
+            "purpose": purpose,
+            "storeType": store_type,
+            "scope": scope(),
             "material": {
                 "path": str(path),
-                "password": password,
+                "storePassword": password,
                 "keyPassword": key_password or password,
+                "alias": alias,
             },
         }
 
@@ -52,20 +48,23 @@ class AndroidMaterialTests(unittest.TestCase):
             selected = validate_document(self.request(store, alias="release"))
             self.assertEqual(selected["status"], "invalid")
             self.assertIn("macos_capability_unavailable", selected["reasonCodes"])
-            self.assertEqual(selected["validationId"], "val-1")
-            self.assertEqual(selected["toolchainSha"], TOOLCHAIN)
-            release = next(item for item in selected["metadata"]["aliases"] if item["alias"] == "release")
+            self.assertEqual(selected["scope"]["validationId"], "val-1")
+            self.assertEqual(selected["contract"], CONTRACT_VERSION)
+            release = next(item for item in selected["aliases"] if item["alias"] == "release")
             self.assertEqual(release["algorithm"], "RSA")
             self.assertTrue(release["signingCapable"])
-            self.assertEqual(release["purpose"], "direct_distribution")
+            self.assertEqual(release["purpose"], "signing")
             self.assertIn("certificateSha256", release)
+            self.assertEqual(selected["purpose"], "direct_distribution")
             self.assertFalse(selected["evidence"]["trustedByPlatform"])
-            self.assertFalse(selected["metadata"]["playAppSigningIdentity"])
+            self.assertFalse(selected["evidence"]["chainTrusted"])
+            self.assertTrue(selected["evidence"]["privateKeyProven"])
+            self.assertFalse(selected["evidence"]["playAppSigningIdentity"])
             upload = validate_document(self.request(store, purpose="play_upload", alias="upload"))
-            upload_alias = next(item for item in upload["metadata"]["aliases"] if item["alias"] == "upload")
+            upload_alias = next(item for item in upload["aliases"] if item["alias"] == "upload")
             self.assertEqual(upload_alias["algorithm"], "EC")
-            self.assertEqual(upload_alias["purpose"], "play_upload")
-            self.assertFalse(upload["metadata"]["playAppSigningIdentity"])
+            self.assertEqual(upload["purpose"], "play_upload")
+            self.assertFalse(upload["evidence"]["playAppSigningIdentity"])
 
     def test_jks_wrong_password_expired_and_not_yet_valid(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -75,7 +74,7 @@ class AndroidMaterialTests(unittest.TestCase):
             fixtures.keystore(store, "release", key, fixtures.certificate(key, "JKS"), "JKS")
             parsed = validate_document(self.request(store, store_type="JKS"))
             self.assertIn("macos_capability_unavailable", parsed["reasonCodes"])
-            self.assertTrue(parsed["metadata"]["aliases"][0]["signingCapable"])
+            self.assertTrue(parsed["aliases"][0]["signingCapable"])
             with self.assertRaises(ValidationFailure) as wrong:
                 validate_document(self.request(store, store_type="JKS", password="incorrect-password"))
             self.assertEqual(wrong.exception.code, "wrong_password")
@@ -99,8 +98,8 @@ class AndroidMaterialTests(unittest.TestCase):
             fixtures.keystore(store, "one", one, fixtures.certificate(one, "One"), "PKCS12")
             fixtures.add_alias(store, "two", two, fixtures.certificate(two, "Two"))
             missing = dict(self.request(store))
-            missing["expected"] = dict(missing["expected"])
-            missing["expected"].pop("alias")
+            missing["material"] = dict(missing["material"])
+            missing["material"].pop("alias")
             with self.assertRaises(ValidationFailure) as ambiguous:
                 validate_document(missing)
             self.assertEqual(ambiguous.exception.code, "ambiguous_alias")
@@ -111,7 +110,7 @@ class AndroidMaterialTests(unittest.TestCase):
                 store_password=fixtures.PASSWORD, key_password="different-key-password")
             parsed = validate_document(self.request(
                 jks, store_type="JKS", key_password="different-key-password"))
-            self.assertTrue(parsed["metadata"]["aliases"][0]["signingCapable"])
+            self.assertTrue(parsed["aliases"][0]["signingCapable"])
             with self.assertRaises(ValidationFailure) as wrong_key:
                 validate_document(self.request(jks, store_type="JKS", key_password="not-the-key-password"))
             self.assertEqual(wrong_key.exception.code, "wrong_key_password")
@@ -140,7 +139,7 @@ class AndroidMaterialTests(unittest.TestCase):
             store = root / "chain.p12"
             fixtures.keystore(store, "release", leaf_key, leaf, "PKCS12", chain=[issuer])
             result = validate_document(self.request(store))
-            selected = next(item for item in result["metadata"]["aliases"] if item["alias"] == "release")
+            selected = next(item for item in result["aliases"] if item["alias"] == "release")
             self.assertEqual(selected["chainLength"], 2)
             self.assertEqual(len(selected["chainSha256"]), 2)
             self.assertEqual(len(set(selected["chainSha256"])), 2)

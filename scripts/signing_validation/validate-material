@@ -30,10 +30,12 @@ BASE_URL=${HAWK_BASE_URL%/}
 umask 077
 WORK=$(mktemp -d "${RUNNER_TEMP:-/tmp}/signing-validation.XXXXXX")
 chmod 700 "$WORK"
-REQUEST="$WORK/request.json"
+ENVELOPE="$WORK/envelope.json"
+OFFLINE="$WORK/offline.json"
 RESULT="$WORK/result.json"
+HAWK_RESULT="$WORK/hawk-result.json"
 cleanup() {
-  rm -f "$REQUEST" "$RESULT"
+  rm -f "$ENVELOPE" "$OFFLINE" "$RESULT" "$HAWK_RESULT"
   rmdir "$WORK" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -41,14 +43,14 @@ trap cleanup EXIT
 curl --fail --silent --show-error \
   --header "Authorization: Bearer $HAWK_VALIDATION_TOKEN" \
   --header 'Accept: application/json' \
-  --output "$REQUEST" \
+  --output "$ENVELOPE" \
   "$BASE_URL/api/v1/buildbox/validations/$VALIDATION_ID/material"
-chmod 600 "$REQUEST"
+chmod 600 "$ENVELOPE"
 
-python3 - "$REQUEST" "$VALIDATOR_SHA" <<'PY'
+python3 - "$ENVELOPE" "$OFFLINE" "$VALIDATOR_SHA" <<'PY'
 import json, sys
-path, expected = sys.argv[1], sys.argv[2]
-document = json.loads(open(path, "rb").read())
+source, destination, expected = sys.argv[1:]
+document = json.loads(open(source, "rb").read())
 if document.get("schemaVersion") != 1:
     raise SystemExit("material schema is not version 1")
 if document.get("validationId") != __import__("os").environ["VALIDATION_ID"]:
@@ -56,49 +58,127 @@ if document.get("validationId") != __import__("os").environ["VALIDATION_ID"]:
 if document.get("toolchainSha") != expected:
     raise SystemExit("material toolchain SHA does not match the checkout")
 kind = document.get("kind")
-if kind not in ("android_keystore", "apple_certificate", "apple_profile"):
+material = document.get("material") if isinstance(document.get("material"), dict) else None
+expected_fields = document.get("expected") if isinstance(document.get("expected"), dict) else {}
+if material is None or "containerBase64" not in material:
+    raise SystemExit("material container is missing")
+scope = {
+    "validationId": document["validationId"],
+    "tenantId": document["tenantId"],
+    "assetId": document["assetId"],
+    "versionId": document["versionId"],
+    "kind": kind,
+    "stage": "validate",
+}
+offline_material = {"bytesBase64": material["containerBase64"]}
+offline = {
+    "contract": "signing-material-validation/v1",
+    "evaluatedAt": document.get("evaluatedAt"),
+    "scope": scope,
+    "material": offline_material,
+}
+if kind == "android_keystore":
+    offline["platform"] = "android"
+    offline["purpose"] = expected_fields.get("purpose")
+    offline["storeType"] = expected_fields.get("storeType")
+    offline_material["storePassword"] = material.get("password")
+    if material.get("keyPassword") is not None:
+        offline_material["keyPassword"] = material["keyPassword"]
+    if expected_fields.get("alias") is not None:
+        offline_material["alias"] = expected_fields["alias"]
+elif kind == "apple_certificate":
+    offline["platform"] = "ios"
+    offline["kind"] = "certificate"
+    offline_material["password"] = material.get("password")
+elif kind == "apple_profile":
+    offline["platform"] = "ios"
+    offline["kind"] = "provisioning_profile"
+    if expected_fields:
+        offline["expectations"] = expected_fields
+else:
     raise SystemExit("material kind is not supported")
+open(destination, "w").write(json.dumps(offline))
 PY
+chmod 600 "$OFFLINE"
 
 set +e
-python3 -m scripts.signing_validation <"$REQUEST" >"$RESULT"
+python3 -m scripts.signing_validation <"$OFFLINE" >"$RESULT"
 status=$?
 set -e
 chmod 600 "$RESULT"
 if [[ "$status" -ne 0 && "$status" -ne 2 ]]; then
   die "validator exited $status"
 fi
-# Refuse to post a body that still carries the material envelope or a key.
-python3 - "$RESULT" <<'PY'
+python3 - "$ENVELOPE" "$RESULT" "$HAWK_RESULT" <<'PY'
 import json, sys
-raw = open(sys.argv[1], "rb").read()
+
+def metadata(kind, offline):
+    if kind == "android_keystore":
+        return {"aliases": offline.get("aliases") or [], "selectedAlias": offline.get("selectedAlias")}
+    if kind == "apple_certificate":
+        certificate = offline.get("certificate") or {}
+        return {key: certificate.get(key) for key in ("teamId", "certificateSha256", "notBefore", "expiresAt")}
+    profile = offline.get("profile") or {}
+    return {
+        "uuid": profile.get("uuid"),
+        "teamId": profile.get("teamId"),
+        "applicationIdentifier": profile.get("applicationIdentifier"),
+        "distributionMethod": profile.get("distribution"),
+        "certificateSha256s": profile.get("developerCertificateSha256") or [],
+        "entitlements": profile.get("entitlements") or {},
+        "expiresAt": profile.get("expiresAt"),
+    }
+
+envelope = json.loads(open(sys.argv[1], "rb").read())
+offline = json.loads(open(sys.argv[2], "rb").read())
+if offline.get("contract") != "signing-material-validation/v1":
+    raise SystemExit("offline result contract is not accepted")
+scope = offline.get("scope") if isinstance(offline.get("scope"), dict) else {}
+for key in ("validationId", "tenantId", "assetId", "versionId", "kind"):
+    if scope.get(key) != envelope.get(key):
+        raise SystemExit("offline result identity does not match the envelope")
+evidence = offline.get("evidence") if isinstance(offline.get("evidence"), dict) else {}
+tools = []
+for name, version in (offline.get("tools") or {}).items():
+    if isinstance(version, str):
+        tools.append({"name": name, "version": version})
+body = {
+    "schemaVersion": 1,
+    "validationId": envelope["validationId"],
+    "tenantId": envelope["tenantId"],
+    "assetId": envelope["assetId"],
+    "versionId": envelope["versionId"],
+    "kind": envelope["kind"],
+    "toolchainSha": envelope["toolchainSha"],
+    "status": offline.get("status"),
+    "reasonCodes": offline.get("reasonCodes") or [],
+    "validatedAt": offline.get("evaluatedAt"),
+    "metadata": metadata(envelope["kind"], offline),
+    "evidence": {
+        "privateKeyProven": bool(evidence.get("privateKeyProven")),
+        "chainTrusted": bool(evidence.get("chainTrusted")),
+        "cmsSignatureVerified": bool(evidence.get("cmsSignatureVerified")),
+        "tools": tools,
+        "notExecuted": evidence.get("notExecuted") or [],
+    },
+}
+raw = json.dumps(body, sort_keys=True).encode()
 if b"BEGIN PRIVATE" in raw or b"BEGIN CERTIFICATE" in raw or b"containerBase64" in raw:
-    raise SystemExit("validator result contains material")
-body = json.loads(raw)
-forbidden = {"password", "keyPassword", "privateKey", "containerBase64", "token", "secret"}
-def walk(value):
-    if isinstance(value, dict):
-        found = forbidden.intersection(value)
-        if found:
-            raise SystemExit("validator result contains a forbidden field")
-        for child in value.values():
-            walk(child)
-    elif isinstance(value, list):
-        for child in value:
-            walk(child)
-walk(body)
+    raise SystemExit("hawk result contains material")
+open(sys.argv[3], "wb").write(raw)
 PY
+chmod 600 "$HAWK_RESULT"
 
 curl --fail --silent --show-error \
   --request POST \
   --header "Authorization: Bearer $HAWK_VALIDATION_TOKEN" \
   --header 'Content-Type: application/json' \
   --header 'Accept: application/json' \
-  --data-binary @"$RESULT" \
+  --data-binary @"$HAWK_RESULT" \
   --output /dev/null \
   "$BASE_URL/api/v1/buildbox/validations/$VALIDATION_ID/result"
 
-python3 - "$RESULT" <<'PY'
+python3 - "$HAWK_RESULT" <<'PY'
 import json, sys
 body = json.load(open(sys.argv[1], "rb"))
 print("validation status=%s reasons=%s" % (body.get("status"), ",".join(body.get("reasonCodes") or [])))

@@ -4,66 +4,69 @@ Offline validator for one authorized Android keystore, Apple certificate, or
 Apple provisioning profile. It does not compile an app, sign a product, or
 accept a compile/sign stage token.
 
-The JSON shape matches the Hawk material envelope from AVIARY-88:
-
-- `GET /api/v1/buildbox/validations/{id}/material`
-- `POST /api/v1/buildbox/validations/{id}/result`
+The offline contract is `signing-material-validation/v1`. Hawk's HTTP envelope
+(`schemaVersion: 1`, top-level identity, `toolchainSha`, `material.containerBase64`)
+is translated by `scripts/signing_validation/validate-material`. The offline
+result is not posted as a Hawk result.
 
 ## Request
 
-JSON on stdin, or a mode-0600 file. `schemaVersion` must be `1`.
+JSON on stdin. `contract` must be `signing-material-validation/v1`.
 `evaluatedAt` is an explicit UTC instant (`...Z`); the process clock is not the
-validity authority. `stage`, when present, must be `validate`.
+validity authority. `scope.stage` must be `validate`.
 
 ```json
 {
-  "schemaVersion": 1,
-  "validationId": "val-1",
-  "tenantId": "tenant-1",
-  "assetId": "asset-1",
-  "versionId": "version-1",
-  "kind": "android_keystore",
-  "toolchainSha": "0123456789abcdef0123456789abcdef01234567",
+  "contract": "signing-material-validation/v1",
   "evaluatedAt": "2026-06-01T00:00:00Z",
-  "material": {
-    "containerBase64": "<keystore bytes>",
-    "password": "from-the-authorized-request",
-    "keyPassword": "from-the-authorized-request"
+  "platform": "android",
+  "purpose": "direct_distribution",
+  "storeType": "PKCS12",
+  "scope": {
+    "validationId": "val-1",
+    "tenantId": "tenant-1",
+    "assetId": "asset-1",
+    "versionId": "version-1",
+    "kind": "android_keystore",
+    "stage": "validate"
   },
-  "expected": {
-    "purpose": "direct_distribution",
-    "storeType": "PKCS12",
+  "material": {
+    "path": "/controlled/keystore.p12",
+    "storePassword": "from-the-authorized-request",
+    "keyPassword": "from-the-authorized-request",
     "alias": "release"
   }
 }
 ```
 
-`kind` is `android_keystore`, `apple_certificate`, or `apple_profile`.
-Certificate and profile are separate requests. Tests may pass `material.path`
-instead of `containerBase64`. Passwords are read from the JSON object and
-handed to tools through the environment, never through argv.
+Apple uses `platform: ios` and `kind: certificate` or `provisioning_profile`.
+The scope kind is `apple_certificate` or `apple_profile`. Certificate and
+profile are separate requests. Passwords are read from the JSON object and
+handed to tools through the environment, never through argv. Tests may pass
+`material.bytesBase64` instead of `material.path`.
 
-Android `expected.purpose` is `direct_distribution` or `play_upload`.
-`play_upload` records upload-key metadata only. It does not claim Play
-app-signing identity.
+Android `purpose` is `direct_distribution` or `play_upload`. `play_upload`
+records upload-key metadata only. It does not claim Play app-signing identity.
+Each alias reports `purpose: signing`, which is the material capability. The
+App distribution choice stays on the request `purpose`.
 
-Apple `expected` may include `teamId`, `bundleId`, `distributionMethod`,
+Apple `expectations` may include `teamId`, `bundleId`, `distribution`,
 `certificateSha256`, and `entitlements`. A caller-supplied distribution never
-overrides the derived one. Entitlement comparison checks values, not only the
-`get-task-allow` flag.
+overrides the derived one. Entitlement comparison checks values.
 
 ## Result
 
-Public JSON echoes `schemaVersion`, the validation identity, `kind`, and
-`toolchainSha`, then adds `status`, `reasonCodes`, `validatedAt`, `metadata`,
-and `evidence`.
+Public JSON keeps `contract`, `scope` (including `validationId`), `status`,
+`reasonCodes`, `evaluatedAt`, and `evidence`.
 
-Android `metadata.aliases[]` contains `alias`, `certificateSha256`,
-`notBefore`, `expiresAt`, `algorithm`, `signingCapable`, and `purpose`.
-Apple certificate metadata contains `teamId`, `certificateSha256`,
-`notBefore`, and `expiresAt`. Profile metadata contains `uuid`, `teamId`,
-`applicationIdentifier`, `distributionMethod`, `certificateSha256s`,
-`entitlements`, and `expiresAt`.
+Android `aliases[]` contains `alias`, `certificateSha256`, `notBefore`,
+`expiresAt`, `algorithm`, `signingCapable`, and `purpose`. Apple certificate
+metadata contains `teamId`, `certificateSha256`, `notBefore`, and `expiresAt`.
+Profile metadata contains `uuid`, `teamId`, `applicationIdentifier`,
+`distribution`, `developerCertificateSha256`, `entitlements`, and `expiresAt`.
+`evidence` reports `privateKeyProven`, `chainTrusted`, and
+`cmsSignatureVerified`. The adapter maps those facts into the Hawk result
+without inventing missing chain or entitlement values.
 
 `status` is `valid` only when this toolchain actually ran the trust checks and
 no reason other than `ok` remains. On this Linux host those checks are
@@ -104,10 +107,11 @@ The reusable job refuses `pull_request` and public repositories. It checks out
 `validator_sha` with `actions/checkout` v4.2.2
 (`11bd71901bbe5b1630ceea73d27597364c9af683`) and Python setup v5.6.0
 (`a26af69be951a213d495a4c3e4e4022e16d87065`). `scripts/signing_validation/exchange-validation`
-calls `POST /api/v1/buildbox/validations/{id}/auth/exchange`.
-`scripts/signing_validation/validate-material` reads the envelope and posts the
-public result. The dispatch proof is read from `GITHUB_EVENT_PATH` and is not
-interpolated into the workflow.
+calls `POST /api/v1/buildbox/validations/{id}/auth/exchange` with
+`{oidcToken, dispatchProof}`. The dispatch proof is read from
+`GITHUB_EVENT_PATH` and is not interpolated into the workflow.
+`scripts/signing_validation/validate-material` reads `GET /material`, writes
+the offline request, and posts the translated public body to `POST /result`.
 The job does not sign an application.
 
 Hawk still owns the API, SQL, and generated client. This repository does not
