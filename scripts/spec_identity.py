@@ -41,13 +41,25 @@ def digest(config):
 
 def validate(config):
     """Reject unknown current-v1 inputs before preparing any application source."""
-    allowed = {'schemaVersion', 'tenantId', 'appId', 'releaseId', 'releaseRevision', 'platform', 'targets',
+    allowed = {'schemaVersion', 'tenantId', 'appId', 'releaseId', 'releaseRevision', 'releaseChannel', 'platform', 'targets',
                'commitSha', 'sourceRepo', 'appProfile', 'artifactPrefix', 'frozenInputs', 'appDisplayName',
                'appName', 'appSlug', 'tenantSlug', 'applicationIdentifier', 'androidApplicationId', 'iosBundleId',
                'dartDefines', 'storageProfileId', 'storageProfileRevision', 'signing', 'bundledReleaseCanonicalJson',
                'packagingRevision', 'brandResources', 'swanConfig'}
     if set(config) - allowed:
         raise ValueError('unknown Build Spec field')
+    if 'releaseChannel' in config:
+        channel = config['releaseChannel']
+        if channel not in ('dev', 'canary', 'stable'):
+            raise ValueError('invalid frozen release channel')
+        revision = config.get('releaseRevision')
+        defines = config.get('dartDefines')
+        if not isinstance(revision, dict) or not isinstance(defines, dict):
+            raise ValueError('missing frozen release channel inputs')
+        revision_channel = revision.get('channel')
+        define_channel = defines.get('SWAN_RELEASE_CHANNEL')
+        if revision_channel != channel or define_channel != channel:
+            raise ValueError('frozen release channel mismatch')
     targets = config.get('targets')
     platform = config.get('platform', 'ios' if targets == ['ipa'] else 'android')
     if (not isinstance(targets, list) or not targets or targets != sorted(set(targets))
