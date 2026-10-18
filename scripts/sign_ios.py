@@ -9,11 +9,28 @@ from pathlib import Path
 import plistlib
 import re
 import secrets
-import shutil
 import tempfile
 import zipfile
 
 from sign_android import checked_zip, request, run
+
+
+def distribution_method(profile):
+    devices = profile.get('ProvisionedDevices')
+    if devices is not None and (not isinstance(devices, list) or not devices
+                               or any(not isinstance(d, str) or not d for d in devices)):
+        raise ValueError('invalid provisioning devices')
+    all_devices = profile.get('ProvisionsAllDevices', False)
+    task_allow = profile.get('Entitlements', {}).get('get-task-allow', False)
+    if type(all_devices) is not bool or type(task_allow) is not bool:
+        raise ValueError('invalid provisioning distribution flags')
+    if all_devices and not devices and not task_allow:
+        return 'enterprise'
+    if not all_devices and not devices and not task_allow:
+        return 'app-store'
+    if devices and not all_devices:
+        return 'development' if task_allow else 'ad-hoc'
+    raise ValueError('inconsistent provisioning distribution')
 
 
 def validate_profile(profile, metadata, certificate):
@@ -26,16 +43,8 @@ def validate_profile(profile, metadata, certificate):
             or profile.get('ExpirationDate', datetime.datetime.min) <= datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)):
         raise ValueError('profile identity, certificate or expiry mismatch')
     method = metadata['distributionMethod']
-    # Store transport and enterprise distribution require separate authorization.
-    devices = profile.get('ProvisionedDevices')
-    if (method not in ('development', 'ad-hoc') or profile.get('ProvisionsAllDevices')
-            or not isinstance(devices, list) or not devices
-            or any(not isinstance(device, str) or not device for device in devices)):
-        raise ValueError('only device-scoped development or ad-hoc profiles are supported')
-    if bool(entitlements.get('get-task-allow')) != (method == 'development'):
+    if distribution_method(profile) != method:
         raise ValueError('profile distribution mismatch')
-    if any('*' in str(value) for value in entitlements.values()):
-        raise ValueError('wildcard entitlements must be resolved before signing')
     # Grant only the fixed App capability set, never every privilege in a profile.
     requested = {
         'application-identifier': expected,
@@ -61,15 +70,73 @@ def validate_app(app, metadata):
     if (info.get('CFBundleIdentifier'), info.get('CFBundleShortVersionString'), str(info.get('CFBundleVersion'))) != (
             metadata['applicationIdentifier'], metadata['versionName'], str(metadata['buildNumber'])):
         raise ValueError('iOS identity or version mismatch')
+    if metadata.get('appDisplayName') and info.get('CFBundleDisplayName') != metadata['appDisplayName']:
+        raise ValueError('iOS display name mismatch')
+    usage = {'camera.capture': 'NSCameraUsageDescription', 'microphone.record': 'NSMicrophoneUsageDescription',
+             'location.foreground': 'NSLocationWhenInUseUsageDescription', 'location.background': 'NSLocationAlwaysAndWhenInUseUsageDescription',
+             'photos.read': 'NSPhotoLibraryUsageDescription', 'photos.write': 'NSPhotoLibraryAddUsageDescription',
+             'biometrics.authenticate': 'NSFaceIDUsageDescription'}
+    for capability in metadata.get('deviceCapabilities', []):
+        if metadata.get('source') == 'tenant' and capability['key'] in usage:
+            description = next((p['description'] for p in capability.get('purposes', []) if p['locale'] == metadata.get('defaultLocale')), None)
+            if not description or info.get(usage[capability['key']]) != description:
+                raise ValueError('iOS usage description mismatch')
     executable = info.get('CFBundleExecutable', '')
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', executable) or not (app / executable).is_file():
         raise ValueError('invalid iOS executable')
     if info.get('CFBundleSupportedPlatforms') != ['iPhoneOS']:
         raise ValueError('simulator products cannot be signed as device apps')
-    if (app / 'PlugIns').exists() or (app / 'Watch').exists():
-        raise ValueError('extensions require their own frozen signing profiles')
     if any(p.name in ('_CodeSignature', 'embedded.mobileprovision') for p in app.rglob('*')):
         raise ValueError('compile product must be unsigned')
+
+
+def component_apps(app, metadata):
+    """Match every nested app/extension to an exact frozen identity and profile."""
+    actual = [app] + sorted((p for p in app.rglob('*') if p.suffix in ('.app', '.appex')),
+                            key=lambda p: len(p.parts), reverse=True)
+    components = metadata.get('components', [])
+    by_id = {c['applicationIdentifier']: c for c in components}
+    if len(by_id) != len(components) or metadata['applicationIdentifier'] in by_id:
+        raise ValueError('duplicate component identity')
+    found, result = set(), []
+    for product in actual:
+        info = plistlib.loads((product / 'Info.plist').read_bytes())
+        identifier = info.get('CFBundleIdentifier')
+        if product == app:
+            component = metadata
+        else:
+            if identifier not in by_id or not identifier.startswith(metadata['applicationIdentifier'] + '.'):
+                raise ValueError('unconfigured nested component')
+            component = dict(metadata, **by_id[identifier])
+            # Component privileges must be explicit; never inherit the host set.
+            component['deviceCapabilities'] = by_id[identifier].get('deviceCapabilities', [])
+            if identifier in found:
+                raise ValueError('duplicate nested identity')
+            found.add(identifier)
+        validate_app(product, component)
+        result.append((product, component))
+    if found != set(by_id):
+        raise ValueError('configured component missing from product')
+    return sorted(result, key=lambda pair: len(pair[0].parts), reverse=True)
+
+
+def verify_signed(product, metadata, certificate, entitlements, profile_bytes, private):
+    """Inspect the actual signature and embedded provisioning of each component."""
+    run(['codesign', '--verify', '--strict', str(product)])
+    prefix = private / 'verified-cert-'
+    run(['codesign', '--display', '--extract-certificates', str(prefix), str(product)])
+    if Path(str(prefix) + '0').read_bytes() != certificate:
+        raise ValueError('signed code certificate mismatch')
+    actual = plistlib.loads(run(['codesign', '--display', '--entitlements', ':-', str(product)]).encode())
+    if actual != entitlements:
+        raise ValueError('signed entitlements mismatch')
+    if (product / 'embedded.mobileprovision').read_bytes() != profile_bytes:
+        raise ValueError('embedded profile mismatch')
+    validate_signed_info = plistlib.loads((product / 'Info.plist').read_bytes())
+    if (validate_signed_info.get('CFBundleIdentifier'), validate_signed_info.get('CFBundleShortVersionString'),
+            str(validate_signed_info.get('CFBundleVersion'))) != (
+            metadata['applicationIdentifier'], metadata['versionName'], str(metadata['buildNumber'])):
+        raise ValueError('signed component identity mismatch')
 
 
 def main():
@@ -88,28 +155,26 @@ def main():
     checked_zip(source)
     with tempfile.TemporaryDirectory(prefix='ios-sign-') as temporary:
         private = Path(temporary)
-        product = private / 'product'
+        extraction_root = private / 'product'
         with zipfile.ZipFile(source) as archive:
             for entry in archive.infolist():
                 parts = Path(entry.filename).parts
                 if len(parts) < 2 or parts[0] != 'Payload' or not parts[1].endswith('.app'):
                     raise ValueError('unexpected archive layout')
-            archive.extractall(product)
+            archive.extractall(extraction_root)
             # zipfile intentionally ignores Unix modes; device executables need
             # their validated executable bits restored before codesign.
             for entry in archive.infolist():
-                extracted = product / entry.filename
+                extracted = extraction_root / entry.filename
                 if extracted.is_file():
                     extracted.chmod(0o755 if (entry.external_attr >> 16) & 0o111 else 0o644)
-        apps = list((product / 'Payload').iterdir())
+        apps = list((extraction_root / 'Payload').iterdir())
         if len(apps) != 1 or not apps[0].is_dir():
             raise ValueError('exactly one device app required')
         app = apps[0]
-        validate_app(app, metadata)
-        p12, provision = private / 'identity.p12', private / 'profile.mobileprovision'
+        products = component_apps(app, metadata)
+        p12 = private / 'identity.p12'
         p12.write_bytes(base64.b64decode(material['containerBase64'], validate=True))
-        provision.write_bytes(base64.b64decode(material['provisioningProfileBase64'], validate=True))
-        profile = plistlib.loads(run(['security', 'cms', '-D', '-i', str(provision)]).encode())
         env = dict(os.environ, IOS_CONTAINER_PASSWORD=material['password'])
         pem = run(['openssl', 'pkcs12', '-in', str(p12), '-clcerts', '-nokeys', '-passin', 'env:IOS_CONTAINER_PASSWORD'], env)
         import ssl
@@ -122,9 +187,24 @@ def main():
         certificate = ssl.PEM_cert_to_DER_cert(match.group())
         if hashlib.sha256(certificate).hexdigest() != metadata['certificateSha256']:
             raise ValueError('certificate fingerprint mismatch')
-        entitlements = validate_profile(profile, metadata, certificate)
-        entitlement_file = private / 'entitlements.plist'
-        entitlement_file.write_bytes(plistlib.dumps(entitlements))
+        signing = []
+        profile_material = {c['applicationIdentifier']: c['provisioningProfileBase64']
+                            for c in material.get('components', [])}
+        for index, (product, component) in enumerate(products):
+            encoded = (material['provisioningProfileBase64'] if product == app
+                       else profile_material[component['applicationIdentifier']])
+            profile_bytes = base64.b64decode(encoded, validate=True)
+            provision = private / f'profile-{index}.mobileprovision'
+            provision.write_bytes(profile_bytes)
+            profile = plistlib.loads(run(['security', 'cms', '-D', '-i', str(provision)]).encode())
+            if component.get('profileSha256') and hashlib.sha256(profile_bytes).hexdigest() != component['profileSha256']:
+                raise ValueError('profile fingerprint mismatch')
+            if component.get('profileUuid') and profile.get('UUID') != component['profileUuid']:
+                raise ValueError('profile UUID mismatch')
+            entitlements = validate_profile(profile, component, certificate)
+            entitlement_file = private / f'entitlements-{index}.plist'
+            entitlement_file.write_bytes(plistlib.dumps(entitlements))
+            signing.append((product, component, profile_bytes, entitlement_file, entitlements))
         keychain = private / 'signing.keychain-db'
         password = secrets.token_hex(32)
         run(['security', 'create-keychain', '-p', password, str(keychain)])
@@ -138,21 +218,25 @@ def main():
             nested = sorted([p for p in app.rglob('*') if p.suffix in ('.framework', '.dylib')], key=lambda p: len(p.parts), reverse=True)
             for item in nested:
                 run(common + [str(item)])
-            shutil.copyfile(provision, app / 'embedded.mobileprovision')
-            run(common + ['--entitlements', str(entitlement_file), str(app)])
+            for product, component, profile_bytes, entitlement_file, entitlements in signing:
+                (product / 'embedded.mobileprovision').write_bytes(profile_bytes)
+                run(common + ['--entitlements', str(entitlement_file), str(product)])
+                verify_signed(product, component, certificate, entitlements, profile_bytes, private)
+            for item in nested:
+                run(['codesign', '--verify', '--strict', str(item)])
+                prefix = private / 'nested-cert-'
+                run(['codesign', '--display', '--extract-certificates', str(prefix), str(item)])
+                if Path(str(prefix) + '0').read_bytes() != certificate:
+                    raise ValueError('nested code certificate mismatch')
             run(['codesign', '--verify', '--deep', '--strict', str(app)])
-            prefix = private / 'verified-cert-'
-            run(['codesign', '--display', '--extract-certificates', str(prefix), str(app)])
-            if hashlib.sha256(Path(str(prefix) + '0').read_bytes()).hexdigest() != metadata['certificateSha256']:
-                raise ValueError('signed app certificate mismatch')
             destination = state / 'artifacts' / 'swan-release.ipa'
             destination.parent.mkdir(exist_ok=True)
             if destination.exists() or destination.is_symlink():
                 raise ValueError('output exists')
             with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
-                for item in sorted(product.rglob('*')):
+                for item in sorted(extraction_root.rglob('*')):
                     if item.is_file():
-                        archive.write(item, item.relative_to(product))
+                        archive.write(item, item.relative_to(extraction_root))
         finally:
             run(['security', 'delete-keychain', str(keychain)])
     with destination.open('rb') as stream:
@@ -160,7 +244,11 @@ def main():
     size = destination.stat().st_size
     request(f'/api/v1/buildbox/runs/{run_id}/signing-proofs', {
         'target': 'ipa', 'signingVersionId': metadata['versionId'], 'certificateSha256': metadata['certificateSha256'],
-        'sha256': digest, 'byteSize': size})
+        'sha256': digest, 'byteSize': size,
+        'components': [{'applicationIdentifier': c['applicationIdentifier'],
+                        'profileVersionId': c.get('profileVersionId'),
+                        'profileUuid': c.get('profileUuid'),
+                        'entitlements': e} for _, c, _, _, e in signing]})
     artifacts = [{'target': 'ipa', 'fileName': destination.name, 'sha256': 'sha256:' + digest, 'byteSize': size, 'signMode': 'signed'}]
     (state / 'artifacts.json').write_text(json.dumps(artifacts))
     (state / 'sign-proof.json').write_text(json.dumps({'signer': 'apple-codesign', 'runId': run_id, 'specHash': metadata['specHash'], 'artifacts': artifacts}))

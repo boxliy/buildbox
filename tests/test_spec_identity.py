@@ -26,3 +26,19 @@ class SpecIdentityTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class SpecSemanticTests(unittest.TestCase):
+    def test_current_v1_rejects_unknown_fields_scope_versions_and_targets(self):
+        import copy
+        value = json.loads((Path(__file__).parent / 'fixtures/build-spec-apk.json').read_text())['config']
+        spec_identity.validate(value)
+        for key, changed in [('unexpected', True), ('targets', ['apk', 'ipa']), ('tenantId', 1)]:
+            invalid = copy.deepcopy(value)
+            invalid[key] = changed
+            with self.assertRaises((ValueError, TypeError)):
+                spec_identity.validate(invalid)
+        for key, changed in [('unexpected', True), ('buildNumber', 0), ('buildNumber', 2100000001), ('commitSha', 'main')]:
+            invalid = copy.deepcopy(value)
+            invalid['frozenInputs'][key] = changed
+            with self.assertRaises(ValueError):
+                spec_identity.validate(invalid)

@@ -10,7 +10,7 @@
     "apk"
   ],
   "artifactPrefix": "builds/spec-apk-1/build-apk-1/",
-  "specHash": "sha256:0ac6298ed058ed5c7b5f8bb3c70de24473b6526a465bb3318407bea83aff0718",
+  "specHash": "sha256:cd46cdb69e7ac9b75a5e054d2fc73f54ddc284de6d2470208f30345fbf67741a",
   "config": {
     "androidApplicationId": "com.example_alpha",
     "appDisplayName": "Alpha App",
@@ -53,9 +53,37 @@
     "tenantId": "401",
     "schemaVersion": 1,
     "frozenInputs": {
+      "tenantId": "401",
+      "appId": "101",
+      "platform": "android",
+      "sourceRepo": "boxliy/aviary",
+      "commitSha": "1111111111111111111111111111111111111111",
       "flutterVersion": "3.47.4",
+      "fvmrc": {
+        "path": "waterfowl/.fvmrc",
+        "sha256": "ec0671a106fda23aa25ac11713e54586a10233e9b0fe19f1e6de19e54361bf07"
+      },
       "versionName": "1.2.3",
-      "buildNumber": 7
+      "buildNumber": 7,
+      "brandAssets": [
+        {
+          "path": "waterfowl/apps/swan/assets/fixture/icon.svg",
+          "sha256": "900fbe934249ad120004bd24adf66aad8817d89586273c0cc50e187bddebb601"
+        }
+      ],
+      "builtinResources": [
+        {
+          "path": "waterfowl/apps/swan/assets/bundled/release.json",
+          "sha256": "ffbc2dfc402782325da71132100e74ff511d1585dd80e4ea196ed4bcace3fef2"
+        }
+      ],
+      "languages": [
+        {
+          "path": "waterfowl/apps/swan/assets/i18n/en.json",
+          "sha256": "d9c5530e2e7d3cfcec81d5cb3d25573822c11a7991f55a3b05e2bf48152ea3a9"
+        }
+      ],
+      "signingReference": "signing:isolated-fixture"
     }
   },
   "runId": "401",

@@ -83,3 +83,14 @@ arrives before its deadline, the attempt fails with `DISPATCH_NOT_OBSERVED`; an
 explicit retry creates a new attempt/proof. Old callbacks and proofs cannot
 claim a new attempt. A crash between the commit and POST can therefore produce
 a failed attempt, never a second ambiguous dispatch.
+
+
+## AVIARY-91 integration pins
+
+The example caller pins prepare/sign/finalize to
+`ea5a3b9c3cc48071a660b8ea0f7e06612d9d427c`; those workflows and compile check out
+scripts at `6eefd9071b6cbf2a20c761eeb98d959880dcd3a6`. The independent material
+validator's existing approval/pin contract is unchanged. These public reusable
+SHAs are not an approved private caller SHA. The private caller's operator must
+record its resulting exact commit in Hawk before authorized product execution.
+No real product workflow is dispatched as part of fixture acceptance.

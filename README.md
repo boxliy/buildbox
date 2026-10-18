@@ -74,9 +74,11 @@ APK uses `zipalign` and `apksigner`, verifies certificate, package and version.
 AAB uses the checksum-pinned bundletool to inspect identity, then JAR signing and
 strict verification. An upload key is not a claim of Play app-signing identity or
 store readiness. iOS requires the frozen Xcode build on macOS, a device product,
-matching team/bundle/certificate/profile and unexpired device-scoped development
-or ad-hoc provisioning. Extensions, wildcard profiles and store/enterprise routes
-are rejected. Sign runs codesign on native code and packages the IPA without
+matching team/bundle/certificate/profile and unexpired development, ad-hoc,
+enterprise or App Store provisioning. Distribution is derived from the verified
+profile flags, not a caller label. App Store output is for the store distribution
+path, not arbitrary device installation. Wildcard profiles are rejected. Every
+nested app/extension requires its own frozen identity/profile/entitlement mapping. Sign runs codesign on native code and packages the IPA without
 running source build phases. Entitlements are restricted to frozen capabilities,
 not copied wholesale from the provisioning profile. No store upload is performed.
 
@@ -99,8 +101,7 @@ never become downloadable.
 certificate/profile. It does not compile or sign an app. The JSON contract is
 `signing-material-validation/v1`; see `scripts/signing_validation/README.md`.
 `validate-signing-material.yml` accepts only a platform `validation_id` on a
-private repository. Hawk's material fetch is not called until AVIARY-88
-releases that API. OpenSSL CMS decode is not Apple trust. macOS
+private repository. The material fetch uses Hawk's authorized validation API. OpenSSL CMS decode is not Apple trust. macOS
 `security`/`codesign` checks stay in Apple `evidence.notExecuted` until they
 run. A proven Android private-key challenge does not carry those checks.
 
@@ -118,3 +119,35 @@ cross-job failure/cancellation branches. They do not prove an Android SDK or
 macOS signing run. Real Actions execution, signing material, storage, devices,
 installation and upgrade acceptance are deferred until business configuration
 is supplied. Unsigned, fixture and simulator results are not signed delivery.
+
+
+### Frozen tenant signing integration (Spec v1)
+
+Hawk freezes tenant asset/version IDs, alias, purpose and certificate fingerprint,
+plus each iOS component's profile version/UUID and minimal requested entitlements.
+The sign stage receives only the current run/attempt/platform's exact material
+versions. Child components do not inherit all host or profile privileges.
+`configure_ios.py` applies fixed bundle/team/name/version and no-sign settings to
+Runner and the source-approved `iosComponentTargets` before credential-free device
+compilation (`flutter build ios --release --no-codesign`), with no distribution
+export on the compile runner. The unsigned IPA transport is assembled from
+`build/ios/iphoneos`; frozen display names are applied to every app/extension.
+Sign executes no application scripts. Frameworks/dylibs and
+child apps are signed inside out and individually verified before the host.
+
+The proof includes the exact component manifest. Missing, extra or changed
+components cannot authorize upload. Hawk binds each target's size/hash proof to
+its exact presigned PUT and independently verifies stored bytes before download.
+Execution success alone never grants download. Revocation blocks future material,
+upload, retry and download authorization; already issued plaintext or presigned
+URLs cannot be remotely erased and remain bounded by their original lifetime.
+
+`spec_identity.py` validates current-v1 semantics before computing the canonical
+hash. The shared vector in `tests/fixtures/build_spec_v1_identity.json` is also
+owned by Hawk. Inline `brandResources` are immutable nonsecret PNG snapshots,
+with resource ID/revision, bytes and SHA-256. They are materialized only at their
+fixed brand paths before the Swan adapter verifies frozen resource digests.
+
+Linux fixture checks cover policy, transport and signing orchestration; they do
+not establish real Apple trust, macOS archive/export, device installation,
+upgrade continuity, TestFlight or store acceptance. No test submits to a store.
