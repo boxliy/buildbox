@@ -28,6 +28,38 @@ if __name__ == '__main__':
     unittest.main()
 
 class SpecSemanticTests(unittest.TestCase):
+    def test_frozen_v1_channel_matches_revision_and_application_define(self):
+        import copy
+        value = json.loads((Path(__file__).parent / 'fixtures/build-spec-apk.json').read_text())['config']
+        for channel in ('dev', 'canary', 'stable'):
+            current = copy.deepcopy(value)
+            current['releaseChannel'] = channel
+            current.setdefault('releaseRevision', {})['channel'] = channel
+            current.setdefault('dartDefines', {})['SWAN_RELEASE_CHANNEL'] = channel
+            spec_identity.validate(current)
+            self.assertNotEqual(spec_identity.digest(current), spec_identity.digest(value))
+            for target in ('releaseRevision', 'dartDefines'):
+                invalid = copy.deepcopy(current)
+                invalid[target]['channel' if target == 'releaseRevision' else 'SWAN_RELEASE_CHANNEL'] = 'other'
+                with self.assertRaisesRegex(ValueError, 'channel mismatch'):
+                    spec_identity.validate(invalid)
+                missing = copy.deepcopy(current)
+                del missing[target]['channel' if target == 'releaseRevision' else 'SWAN_RELEASE_CHANNEL']
+                with self.assertRaisesRegex(ValueError, 'channel mismatch'):
+                    spec_identity.validate(missing)
+                for malformed in (None, [], 'stable'):
+                    missing = dict(current, **{target: malformed})
+                    with self.assertRaisesRegex(ValueError, 'missing frozen release channel inputs'):
+                        spec_identity.validate(missing)
+                missing = copy.deepcopy(current)
+                del missing[target]
+                with self.assertRaisesRegex(ValueError, 'missing frozen release channel inputs'):
+                    spec_identity.validate(missing)
+        for channel in ('latest', '', None, 1, True):
+            invalid = dict(value, releaseChannel=channel)
+            with self.assertRaisesRegex(ValueError, 'invalid frozen release channel'):
+                spec_identity.validate(invalid)
+
     def test_current_v1_rejects_unknown_fields_scope_versions_and_targets(self):
         import copy
         value = json.loads((Path(__file__).parent / 'fixtures/build-spec-apk.json').read_text())['config']
