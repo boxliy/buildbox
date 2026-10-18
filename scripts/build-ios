@@ -16,7 +16,7 @@ version=$(jq -er '.config.frozenInputs.versionName' "$state/spec.json")
 number=$(jq -er '.config.frozenInputs.buildNumber' "$state/spec.json")
 identifier=$(jq -er '.config.applicationIdentifier' "$state/spec.json")
 name=$(jq -er '.config.appDisplayName' "$state/spec.json")
-[[ "$identifier" =~ ^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*)+$ ]] || exit 1
+[[ "$identifier" =~ ^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z][A-Za-z0-9-]*)+$ ]] || exit 1
 # Xcode project build settings override process environment. Supply a dedicated
 # xcconfig through XCODE_XCCONFIG_FILE so identity cannot fall back to Swan.
 python3 - "$state/identity.xcconfig" "$identifier" "$name" <<'PYCFG'
@@ -31,13 +31,18 @@ export XCODE_XCCONFIG_FILE="$state/identity.xcconfig"
 jq -e '.config.dartDefines' "$state/spec.json" >"$state/ios-dart-defines.json"
 cd "$source_root/waterfowl/apps/swan"
 # Source build phases run only here, before any signing material is available.
-flutter build ios --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "--dart-define-from-file=$state/ios-dart-defines.json"
+python3 "$script_dir/configure_ios.py" "$state/spec.json" ios/Runner.xcodeproj
+method=$(jq -er '.config.signing.distributionMethod | select(. == "development" or . == "ad-hoc" or . == "enterprise" or . == "app-store")' "$state/spec.json")
+flutter build ipa --export-method="$method" --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "--dart-define-from-file=$state/ios-dart-defines.json"
 # Plist mutation is data-only and occurs before isolated signing.
 python3 - "$name" "$state/spec.json" <<'PYNAME'
 from pathlib import Path
-import json, plistlib, sys
+import json, plistlib, re, sys
 spec=json.loads(Path(sys.argv[2]).read_text())
-capabilities={item['key'] for item in spec['config']['appProfile'].get('deviceCapabilities', [])}
+profile=spec['config']['appProfile']
+capabilities={item['key'] for item in profile.get('deviceCapabilities', [])}
+locale=profile.get('defaultLocale')
+purposes={item['key']: {p['locale']:p['description'] for p in item.get('purposes', [])} for item in profile.get('deviceCapabilities', [])}
 usage={
  'camera.capture': ('NSCameraUsageDescription', 'camera'),
  'microphone.record': ('NSMicrophoneUsageDescription', 'microphone'),
@@ -49,25 +54,41 @@ usage={
 }
 if not capabilities <= set(usage) | {'notifications.push', 'background.execution'}:
     raise SystemExit('unsupported iOS native capability')
-for info in Path('build/ios/iphoneos').glob('*.app/Info.plist'):
+for info in Path('build/ios/archive/Runner.xcarchive/Products/Applications').glob('*.app/Info.plist'):
     body=plistlib.loads(info.read_bytes());body['CFBundleDisplayName']=sys.argv[1]
     for capability, (key, purpose) in usage.items():
         if capability in capabilities:
-            body[key] = sys.argv[1] + ' uses ' + purpose + ' for enabled app features.'
+            description=purposes.get(capability, {}).get(locale)
+            if spec['config'].get('signing', {}).get('source') == 'tenant' and not description:
+                raise SystemExit('missing frozen usage description')
+            body[key] = description or sys.argv[1] + ' uses ' + purpose + ' for enabled app features.'
     if 'location.background' in capabilities:
-        body['NSLocationWhenInUseUsageDescription'] = sys.argv[1] + ' uses location for enabled app features.'
+        body['NSLocationWhenInUseUsageDescription'] = purposes.get('location.foreground', {}).get(locale) or purposes.get('location.background', {}).get(locale) or sys.argv[1] + ' uses location for enabled app features.'
     modes=[]
     if 'location.background' in capabilities: modes.append('location')
     if 'notifications.push' in capabilities: modes.append('remote-notification')
     if 'background.execution' in capabilities: modes.append('fetch')
     body['UIBackgroundModes']=modes
     info.write_bytes(plistlib.dumps(body))
+    for localization in profile.get('localizations', []):
+        language=localization['locale']
+        if not re.fullmatch(r'[A-Za-z0-9-]+', language):
+            raise SystemExit('invalid native localization')
+        strings={'CFBundleDisplayName': localization['displayName']}
+        for capability, (key, _) in usage.items():
+            if capability in capabilities and purposes.get(capability, {}).get(language):
+                strings[key]=purposes[capability][language]
+        if 'location.background' in capabilities and purposes.get('location.background', {}).get(language):
+            strings.setdefault('NSLocationWhenInUseUsageDescription', purposes['location.background'][language])
+        directory=info.parent / (language + '.lproj')
+        directory.mkdir(exist_ok=True)
+        (directory / 'InfoPlist.strings').write_bytes(plistlib.dumps(strings))
 PYNAME
 mkdir -p "$state/unsigned"
 python3 - "$state/unsigned/swan-release.ipa" <<'PY'
 from pathlib import Path
 import sys, zipfile
-apps = list(Path('build/ios/iphoneos').glob('*.app'))
+apps = list(Path('build/ios/archive/Runner.xcarchive/Products/Applications').glob('*.app'))
 if len(apps) != 1:
     raise SystemExit('expected exactly one unsigned device app')
 with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as archive:

@@ -78,7 +78,12 @@ SPEC_HASH=$(json_get_required '.specHash' specHash)
 ARTIFACT_PREFIX=$(json_get_required '.artifactPrefix' artifactPrefix)
 ANDROID_APPLICATION_ID=$(json_get_required '.config.applicationIdentifier // .config.androidApplicationId // .config.iosBundleId' config.applicationIdentifier)
 APP_DISPLAY_NAME=$(json_get_required '.config.appDisplayName' config.appDisplayName)
-[[ "$ANDROID_APPLICATION_ID" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || die 'androidApplicationId is invalid'
+PLATFORM=$(jq -er '.config.platform // .config.frozenInputs.platform' "$SPEC_RESPONSE")
+if [[ "$PLATFORM" == ios ]]; then
+  [[ "$ANDROID_APPLICATION_ID" =~ ^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z][A-Za-z0-9-]*)+$ ]] || die 'iosBundleId is invalid'
+else
+  [[ "$ANDROID_APPLICATION_ID" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || die 'androidApplicationId is invalid'
+fi
 
 ACTUAL_SPEC_HASH=$(python3 "$SCRIPT_DIR/spec_identity.py" "$SPEC_RESPONSE") || die 'invalid Build Spec v1 identity'
 [[ "$SPEC_HASH" == "$ACTUAL_SPEC_HASH" ]] || die 'specHash does not match config'

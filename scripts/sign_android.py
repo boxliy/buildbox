@@ -65,8 +65,8 @@ def request(path, body=None):
     req = urllib.request.Request(base + path, data=payload, headers={
         "Authorization": "Bearer " + token, "Content-Type": "application/json"})
     with urllib.request.build_opener(NoRedirect).open(req, timeout=30) as response:
-        data = response.read(1024 * 1024 + 1)
-        if len(data) > 1024 * 1024:
+        data = response.read(32 * 1024 * 1024 + 1)
+        if len(data) > 32 * 1024 * 1024:
             raise ValueError("platform response too large")
         return json.loads(data) if data else None
 

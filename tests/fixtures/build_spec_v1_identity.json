@@ -52,8 +52,47 @@
         }
       ],
       "signingReference": "signing:isolated-fixture"
-    }
+    },
+    "signing": {
+      "source": "tenant",
+      "versionId": "100",
+      "assetId": "99",
+      "version": 2,
+      "certificateSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "alias": "release",
+      "purpose": "play_upload",
+      "distributionMethod": "play",
+      "teamId": null,
+      "materials": [
+        {
+          "assetId": "99",
+          "versionId": "100",
+          "version": 2,
+          "materialSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "metadata": {
+            "aliases": [
+              {
+                "alias": "release",
+                "algorithm": "EC",
+                "certificateSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "signingCapable": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "packagingRevision": 7,
+    "brandResources": [
+      {
+        "path": "waterfowl/.aviary-brand/icon.png",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resourceId": "101",
+        "revision": 3,
+        "contentBase64": "Zml4dHVyZQ=="
+      }
+    ]
   },
-  "canonicalJson": "{\"appId\":\"42\",\"appProfile\":{\"enabled\":true,\"label\":\"繁體\\n\\\"quoted\\\"\",\"optional\":null,\"revision\":3},\"commitSha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"frozenInputs\":{\"appId\":\"42\",\"brandAssets\":[{\"path\":\"waterfowl/apps/swan/assets/fixture/icon.svg\",\"sha256\":\"900fbe934249ad120004bd24adf66aad8817d89586273c0cc50e187bddebb601\"}],\"buildNumber\":42,\"builtinResources\":[{\"path\":\"waterfowl/apps/swan/assets/bundled/release.json\",\"sha256\":\"ffbc2dfc402782325da71132100e74ff511d1585dd80e4ea196ed4bcace3fef2\"}],\"commitSha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"flutterVersion\":\"3.47.4\",\"fvmrc\":{\"path\":\"waterfowl/.fvmrc\",\"sha256\":\"ec0671a106fda23aa25ac11713e54586a10233e9b0fe19f1e6de19e54361bf07\"},\"languages\":[{\"path\":\"waterfowl/apps/swan/assets/i18n/en.json\",\"sha256\":\"d9c5530e2e7d3cfcec81d5cb3d25573822c11a7991f55a3b05e2bf48152ea3a9\"}],\"platform\":\"android\",\"signingReference\":\"signing:isolated-fixture\",\"sourceRepo\":\"boxliy/aviary\",\"tenantId\":\"9007199254740993\",\"versionName\":\"1.2.3\"},\"platform\":\"android\",\"releaseRevision\":{\"contentHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"77\"},\"schemaVersion\":1,\"targets\":[\"aab\",\"apk\"],\"tenantId\":\"9007199254740993\"}",
-  "sha256": "sha256:43cf010f4d09daa8855140b1998996140fc688b9a19cd1346a4272880aa580f2"
+  "canonicalJson": "{\"appId\":\"42\",\"appProfile\":{\"enabled\":true,\"label\":\"繁體\\n\\\"quoted\\\"\",\"optional\":null,\"revision\":3},\"brandResources\":[{\"contentBase64\":\"Zml4dHVyZQ==\",\"path\":\"waterfowl/.aviary-brand/icon.png\",\"resourceId\":\"101\",\"revision\":3,\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}],\"commitSha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"frozenInputs\":{\"appId\":\"42\",\"brandAssets\":[{\"path\":\"waterfowl/apps/swan/assets/fixture/icon.svg\",\"sha256\":\"900fbe934249ad120004bd24adf66aad8817d89586273c0cc50e187bddebb601\"}],\"buildNumber\":42,\"builtinResources\":[{\"path\":\"waterfowl/apps/swan/assets/bundled/release.json\",\"sha256\":\"ffbc2dfc402782325da71132100e74ff511d1585dd80e4ea196ed4bcace3fef2\"}],\"commitSha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"flutterVersion\":\"3.47.4\",\"fvmrc\":{\"path\":\"waterfowl/.fvmrc\",\"sha256\":\"ec0671a106fda23aa25ac11713e54586a10233e9b0fe19f1e6de19e54361bf07\"},\"languages\":[{\"path\":\"waterfowl/apps/swan/assets/i18n/en.json\",\"sha256\":\"d9c5530e2e7d3cfcec81d5cb3d25573822c11a7991f55a3b05e2bf48152ea3a9\"}],\"platform\":\"android\",\"signingReference\":\"signing:isolated-fixture\",\"sourceRepo\":\"boxliy/aviary\",\"tenantId\":\"9007199254740993\",\"versionName\":\"1.2.3\"},\"packagingRevision\":7,\"platform\":\"android\",\"releaseRevision\":{\"contentHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"77\"},\"schemaVersion\":1,\"signing\":{\"alias\":\"release\",\"assetId\":\"99\",\"certificateSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"distributionMethod\":\"play\",\"materials\":[{\"assetId\":\"99\",\"materialSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"metadata\":{\"aliases\":[{\"algorithm\":\"EC\",\"alias\":\"release\",\"certificateSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"signingCapable\":true}]},\"version\":2,\"versionId\":\"100\"}],\"purpose\":\"play_upload\",\"source\":\"tenant\",\"teamId\":null,\"version\":2,\"versionId\":\"100\"},\"targets\":[\"aab\",\"apk\"],\"tenantId\":\"9007199254740993\"}",
+  "sha256": "sha256:da29fb2be9e8157e992aa80a99fa39f5d8aefaaf41748db1f7080c00543929d4"
 }
