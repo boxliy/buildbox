@@ -82,6 +82,16 @@ can prevent `always()` execution; Hawk's leased reconciliation handles lost
 callbacks and external run outcomes. Successful Actions without trusted artifacts
 never become downloadable.
 
+## Signing material validation
+
+`scripts/signing_validation/` validates one authorized Android keystore or Apple
+certificate/profile. It does not compile or sign an app. The JSON contract is
+`signing-material-validation/v1`; see `scripts/signing_validation/README.md`.
+`validate-signing-material.yml` accepts only a platform `validation_id` on a
+private repository. Hawk's material fetch is not called until AVIARY-88
+releases that API. OpenSSL CMS decode is not Apple trust. macOS
+`security`/`codesign` checks are reported in `evidence.notExecuted` when absent.
+
 ## Checks and acceptance limits
 
 ```sh

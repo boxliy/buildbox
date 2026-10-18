@@ -1,0 +1,83 @@
+name: Validate signing material
+
+# Material validation only. This workflow does not compile or sign an app.
+# Hawk must authorize validation_id before any material is fetched. The pinned
+# checkout SHA below is replaced with this commit when the workflow is merged.
+on:
+  workflow_call:
+    inputs:
+      validation_id:
+        required: true
+        type: string
+    secrets:
+      HAWK_BASE_URL:
+        required: true
+      HAWK_OIDC_AUDIENCE:
+        required: true
+  workflow_dispatch:
+    inputs:
+      validation_id:
+        description: Platform validation id
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: >-
+      github.repository_owner == 'boxliy' &&
+      github.event.repository.private == true &&
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+      github.event_name != 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VALIDATION_ID: ${{ inputs.validation_id }}
+    steps:
+      - name: Reject unscoped validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VALIDATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$ ]]
+          [[ "${{ github.event_name }}" != "pull_request" ]]
+          [[ "${{ github.event.repository.private }}" == "true" ]]
+
+      - name: Checkout pinned validator
+        uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
+        with:
+          repository: boxliy/buildbox
+          ref: 9d0717314dbc602b7e302347f0c27125e6fab42e
+          persist-credentials: false
+
+      - name: Setup trusted Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+
+      - name: Record validator capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from scripts.signing_validation.tools import probe
+          from scripts.signing_validation.contract import CONTRACT_VERSION, VALIDATOR_VERSION
+          print(json.dumps({
+              "contract": CONTRACT_VERSION,
+              "validatorVersion": VALIDATOR_VERSION,
+              "tools": probe(),
+              "stage": "validate",
+          }, sort_keys=True))
+          PY
+
+      - name: Stop before material fetch
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'validation %s is scoped; Hawk material fetch is not released\n' "$VALIDATION_ID" >&2
+          exit 1
