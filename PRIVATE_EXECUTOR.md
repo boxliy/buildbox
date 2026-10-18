@@ -88,8 +88,8 @@ a failed attempt, never a second ambiguous dispatch.
 ## AVIARY-91 integration pins
 
 The example caller pins prepare/sign/finalize to
-`501201a01267ca31efdb9e687f18c0b02b7e2ba5`; those workflows and compile check out
-scripts at `5be050656e1166452b4c6772fe7df4257f26dc05`. The independent material
+`ea5a3b9c3cc48071a660b8ea0f7e06612d9d427c`; those workflows and compile check out
+scripts at `6eefd9071b6cbf2a20c761eeb98d959880dcd3a6`. The independent material
 validator's existing approval/pin contract is unchanged. These public reusable
 SHAs are not an approved private caller SHA. The private caller's operator must
 record its resulting exact commit in Hawk before authorized product execution.
