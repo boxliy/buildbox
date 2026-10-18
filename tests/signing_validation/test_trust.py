@@ -134,6 +134,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("java-version: '17'", reusable)
         self.assertIn("HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}", caller)
         self.assertIn("secrets:\n      HAWK_OIDC_AUDIENCE:", reusable)
+        pinned = "549b8a8c5005ae16c092c98c32452d4cf559f0d9"
+        self.assertEqual(caller.count(pinned), 2)
 
 
 if __name__ == "__main__":
