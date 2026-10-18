@@ -32,8 +32,8 @@ jq -e '.config.dartDefines' "$state/spec.json" >"$state/ios-dart-defines.json"
 cd "$source_root/waterfowl/apps/swan"
 # Source build phases run only here, before any signing material is available.
 python3 "$script_dir/configure_ios.py" "$state/spec.json" ios/Runner.xcodeproj
-method=$(jq -er '.config.signing.distributionMethod | select(. == "development" or . == "ad-hoc" or . == "enterprise" or . == "app-store")' "$state/spec.json")
-flutter build ipa --export-method="$method" --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "--dart-define-from-file=$state/ios-dart-defines.json"
+flutter build ios --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "--dart-define-from-file=$state/ios-dart-defines.json"
+# Produce only the unsigned device app; distribution signing is isolated below.
 # Plist mutation is data-only and occurs before isolated signing.
 python3 - "$name" "$state/spec.json" <<'PYNAME'
 from pathlib import Path
@@ -54,8 +54,14 @@ usage={
 }
 if not capabilities <= set(usage) | {'notifications.push', 'background.execution'}:
     raise SystemExit('unsupported iOS native capability')
-for info in Path('build/ios/archive/Runner.xcarchive/Products/Applications').glob('*.app/Info.plist'):
-    body=plistlib.loads(info.read_bytes());body['CFBundleDisplayName']=sys.argv[1]
+for app in Path('build/ios/iphoneos').glob('*.app'):
+    for component in [app, *(p for p in app.rglob('*') if p.suffix in {'.app', '.appex'} and p.is_dir())]:
+        info=component / 'Info.plist'
+        body=plistlib.loads(info.read_bytes())
+        body['CFBundleDisplayName']=sys.argv[1]
+        info.write_bytes(plistlib.dumps(body))
+for info in Path('build/ios/iphoneos').glob('*.app/Info.plist'):
+    body=plistlib.loads(info.read_bytes())
     for capability, (key, purpose) in usage.items():
         if capability in capabilities:
             description=purposes.get(capability, {}).get(locale)
@@ -88,7 +94,7 @@ mkdir -p "$state/unsigned"
 python3 - "$state/unsigned/swan-release.ipa" <<'PY'
 from pathlib import Path
 import sys, zipfile
-apps = list(Path('build/ios/archive/Runner.xcarchive/Products/Applications').glob('*.app'))
+apps = list(Path('build/ios/iphoneos').glob('*.app'))
 if len(apps) != 1:
     raise SystemExit('expected exactly one unsigned device app')
 with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as archive:

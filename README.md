@@ -129,7 +129,10 @@ The sign stage receives only the current run/attempt/platform's exact material
 versions. Child components do not inherit all host or profile privileges.
 `configure_ios.py` applies fixed bundle/team/name/version and no-sign settings to
 Runner and the source-approved `iosComponentTargets` before credential-free device
-archive compilation. Sign executes no application scripts. Frameworks/dylibs and
+compilation (`flutter build ios --release --no-codesign`), with no distribution
+export on the compile runner. The unsigned IPA transport is assembled from
+`build/ios/iphoneos`; frozen display names are applied to every app/extension.
+Sign executes no application scripts. Frameworks/dylibs and
 child apps are signed inside out and individually verified before the host.
 
 The proof includes the exact component manifest. Missing, extra or changed

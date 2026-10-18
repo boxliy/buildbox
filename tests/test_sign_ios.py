@@ -84,7 +84,7 @@ class IosCapabilityContractTests(unittest.TestCase):
         script = source.split("<<'PYNAME'\n", 1)[1].split('\nPYNAME', 1)[0]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            info = root / 'build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app/Info.plist'
+            info = root / 'build/ios/iphoneos/Runner.app/Info.plist'
             info.parent.mkdir(parents=True)
             spec = root / 'spec.json'
             for capabilities, accepted in [(keys, True), ([], True), (['storage.photos.read'], False), (['unknown'], False)]:
@@ -174,6 +174,7 @@ class NestedSigningOrderTests(unittest.TestCase):
         metadata = {'platform': 'ios', 'targets': ['ipa'], 'runId': '123', 'specHash': 'sha256:fixture',
                     'versionId': '12', 'certificateSha256': __import__('hashlib').sha256(certificate).hexdigest(),
                     'applicationIdentifier': 'com.example.app', 'versionName': '1.2.3', 'buildNumber': 7,
+                    'appDisplayName': 'Fixture App',
                     'teamId': 'TEAM123456', 'distributionMethod': 'enterprise', 'profileUuid': 'HOST',
                     'components': [{'applicationIdentifier': 'com.example.app.share', 'profileVersionId': '14', 'profileUuid': 'CHILD'}]}
         def profile(bundle, uuid):
@@ -208,7 +209,8 @@ class NestedSigningOrderTests(unittest.TestCase):
             (root / 'unsigned').mkdir()
             with zipfile.ZipFile(root / 'unsigned/swan-release.ipa', 'w') as archive:
                 for path, bundle in [('Runner.app', 'com.example.app'), ('Runner.app/PlugIns/Share.appex', 'com.example.app.share')]:
-                    info = {'CFBundleIdentifier': bundle, 'CFBundleShortVersionString': '1.2.3', 'CFBundleVersion': '7',
+                    info = {'CFBundleIdentifier': bundle, 'CFBundleDisplayName': 'Fixture App',
+                            'CFBundleShortVersionString': '1.2.3', 'CFBundleVersion': '7',
                             'CFBundleExecutable': 'Runner', 'CFBundleSupportedPlatforms': ['iPhoneOS']}
                     archive.writestr('Payload/' + path + '/Info.plist', plistlib.dumps(info))
                     archive.writestr('Payload/' + path + '/Runner', b'fixture executable')
