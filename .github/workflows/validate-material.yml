@@ -2,8 +2,8 @@ name: Validate material caller
 
 # Fixed private caller. The only inputs are a validation id, a dispatch proof,
 # and the Hawk base URL. Material and passwords are never workflow inputs.
-# The reusable workflow SHA and validator_sha are the commit that contains
-# scripts/signing_validation. Update both together when that tree changes.
+# The reusable workflow SHA and validator_sha name the commit that contains
+# scripts/signing_validation. They stay equal and move together.
 on:
   workflow_dispatch:
     inputs:
@@ -29,8 +29,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/validate-signing-material.yml@b939fdd9fc02ca05a78be8887c0cc5be87ad9fcd
+    uses: boxliy/buildbox/.github/workflows/validate-signing-material.yml@c3b76efee8d827b37c5bcb7cf1dc1a3b0dd93926
     with:
       validation_id: ${{ inputs.validation_id }}
       hawk_base_url: ${{ inputs.hawk_base_url }}
-      validator_sha: b939fdd9fc02ca05a78be8887c0cc5be87ad9fcd
+      validator_sha: c3b76efee8d827b37c5bcb7cf1dc1a3b0dd93926
