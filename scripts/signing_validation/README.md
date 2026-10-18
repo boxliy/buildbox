@@ -71,14 +71,16 @@ Profile metadata contains `uuid`, `teamId`, `applicationIdentifier`,
 without inventing missing chain or entitlement values.
 
 `status` is `valid` only when the required checks actually ran and no other
-reason remains. Android needs the private-key challenge. An Apple certificate
-also needs chain trust. A profile also needs a CMS signature check and chain
-trust. `security_cms_anchor_verify`, `keychain_import`, and
-`codesign_identity_check` stay in `evidence.notExecuted` until this process
-runs them. Finding `security` or `codesign` on macOS does not clear that list
-and does not make an Apple result valid. OpenSSL `cms -verify -noverify` only
-parses a profile. `installable` and `trustedByPlatform` stay false.
-`signingCapable` reports the synthetic challenge only.
+reason remains. Android needs the private-key challenge. `chainTrusted` may
+stay false and `notExecuted` stays empty. An Apple certificate also needs
+chain trust. A profile also needs a CMS signature check and chain trust.
+`security_cms_anchor_verify`, `keychain_import`, and
+`codesign_identity_check` stay in Apple `evidence.notExecuted` until this
+process runs them. They are not added to an Android result. Finding
+`security` or `codesign` on macOS does not clear that Apple list and does not
+make an Apple result valid. OpenSSL `cms -verify -noverify` only parses a
+profile. `installable` and `trustedByPlatform` stay false. `signingCapable`
+reports the synthetic challenge only.
 
 Passwords, private keys, PKCS#12 bytes, profiles, tokens, and URLs are rejected
 if they appear in the result. Tool stderr is discarded and is not copied into

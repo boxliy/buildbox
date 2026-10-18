@@ -26,14 +26,17 @@ def probe():
     }
 
 
-def not_executed():
-    """Trust checks this process did not run. Non-empty forbids status=valid.
+def not_executed(platform):
+    """Apple trust checks this process did not run.
 
-    Finding security and codesign is not the same as running them. This
-    validator never invokes those tools, so the checks stay not executed on
-    every host, including macOS.
+    Those three checks belong only to an Apple certificate or profile. They
+    are not Android results. Finding security and codesign is not the same as
+    running them. This validator never invokes those tools, so the checks stay
+    not executed on every host, including macOS, until the commands actually run.
     """
-    return list(TRUST_CHECKS)
+    if platform == "ios":
+        return list(TRUST_CHECKS)
+    return []
 
 
 def _version(binary, args):

@@ -21,7 +21,8 @@ class ToolsPresentTrustTests(unittest.TestCase):
             "codesign": "present",
             "macosKeychain": True,
         }):
-            self.assertEqual(not_executed(), list(TRUST_CHECKS))
+            self.assertEqual(not_executed("ios"), list(TRUST_CHECKS))
+            self.assertEqual(not_executed("android"), [])
 
     def test_apple_stays_invalid_when_tools_exist_but_trust_did_not_run(self):
         present = {
@@ -71,7 +72,7 @@ class ToolsPresentTrustTests(unittest.TestCase):
             self.assertFalse(result["evidence"]["chainTrusted"])
             self.assertFalse(result["evidence"]["cmsSignatureVerified"])
 
-    def test_android_can_be_valid_only_when_no_check_remains(self):
+    def test_android_private_key_challenge_is_valid_without_apple_checks(self):
         with tempfile.TemporaryDirectory() as directory:
             store = Path(directory) / "keys.p12"
             key = fixtures.rsa_key()
@@ -87,14 +88,10 @@ class ToolsPresentTrustTests(unittest.TestCase):
                     "keyPassword": fixtures.PASSWORD, "alias": "release",
                 },
             }
-            blocked = validate_document(request)
-            self.assertEqual(blocked["status"], "invalid")
-            self.assertTrue(blocked["evidence"]["privateKeyProven"])
-            self.assertTrue(blocked["evidence"]["notExecuted"])
-            with mock.patch("scripts.signing_validation.validate.not_executed", return_value=[]):
-                proven = validate_document(request)
+            proven = validate_document(request)
         self.assertEqual(proven["status"], "valid")
         self.assertEqual(proven["reasonCodes"], ["ok"])
+        self.assertTrue(proven["evidence"]["privateKeyProven"])
         self.assertFalse(proven["evidence"]["chainTrusted"])
         self.assertEqual(proven["evidence"]["notExecuted"], [])
 

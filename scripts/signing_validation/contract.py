@@ -112,7 +112,8 @@ HAWK_REASON_MAP = {
 # Material validation never grants compile, sign, publish, or asset management.
 STAGE = "validate"
 
-# Trust checks this Linux parser does not perform. Their presence forbids status=valid.
+# Apple trust checks this parser does not perform. They stay on Apple results
+# until the commands run. They are not Android notExecuted entries.
 TRUST_CHECKS = (
     "security_cms_anchor_verify",
     "keychain_import",

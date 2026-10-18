@@ -44,8 +44,9 @@ class AndroidMaterialTests(unittest.TestCase):
             fixtures.add_alias(store, "upload", ec, fixtures.certificate(ec, "EC Upload"))
             del rsa_cert
             selected = validate_document(self.request(store, alias="release"))
-            self.assertEqual(selected["status"], "invalid")
-            self.assertIn("macos_capability_unavailable", selected["reasonCodes"])
+            self.assertEqual(selected["status"], "valid")
+            self.assertEqual(selected["reasonCodes"], ["ok"])
+            self.assertEqual(selected["evidence"]["notExecuted"], [])
             self.assertEqual(selected["scope"]["validationId"], "val-1")
             self.assertEqual(selected["contract"], CONTRACT_VERSION)
             release = next(item for item in selected["aliases"] if item["alias"] == "release")
@@ -72,7 +73,8 @@ class AndroidMaterialTests(unittest.TestCase):
             fixtures.keystore(store, "release", key, fixtures.certificate(key, "JKS"), "JKS")
             parsed = validate_document(self.request(store))
             self.assertEqual(parsed["storeType"], "JKS")
-            self.assertIn("macos_capability_unavailable", parsed["reasonCodes"])
+            self.assertEqual(parsed["status"], "valid")
+            self.assertEqual(parsed["evidence"]["notExecuted"], [])
             self.assertTrue(parsed["aliases"][0]["signingCapable"])
             with self.assertRaises(ValidationFailure) as wrong:
                 validate_document(self.request(store, password="incorrect-password"))

@@ -101,7 +101,8 @@ certificate/profile. It does not compile or sign an app. The JSON contract is
 `validate-signing-material.yml` accepts only a platform `validation_id` on a
 private repository. Hawk's material fetch is not called until AVIARY-88
 releases that API. OpenSSL CMS decode is not Apple trust. macOS
-`security`/`codesign` checks are reported in `evidence.notExecuted` when absent.
+`security`/`codesign` checks stay in Apple `evidence.notExecuted` until they
+run. A proven Android private-key challenge does not carry those checks.
 
 ## Checks and acceptance limits
 

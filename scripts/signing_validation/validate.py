@@ -30,7 +30,7 @@ def validate_document(document):
         body = android.validate(document, evaluated_at)
     else:
         body = apple.validate(document, evaluated_at)
-    pending = not_executed()
+    pending = not_executed(platform)
     reasons = list(body["reasonCodes"])
     if pending and REASON_MACOS_REQUIRED not in reasons:
         reasons.append(REASON_MACOS_REQUIRED)
