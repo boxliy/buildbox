@@ -27,10 +27,12 @@ def probe():
 
 
 def not_executed():
-    """Trust checks this process did not run. Non-empty forbids status=valid."""
-    capabilities = probe()
-    if capabilities["macosKeychain"]:
-        return []
+    """Trust checks this process did not run. Non-empty forbids status=valid.
+
+    Finding security and codesign is not the same as running them. This
+    validator never invokes those tools, so the checks stay not executed on
+    every host, including macOS.
+    """
     return list(TRUST_CHECKS)
 
 

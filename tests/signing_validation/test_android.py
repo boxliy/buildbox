@@ -19,13 +19,11 @@ def scope(kind="android_keystore"):
 
 
 class AndroidMaterialTests(unittest.TestCase):
-    def request(self, path, purpose="direct_distribution", store_type="PKCS12", alias="release", password=fixtures.PASSWORD, key_password=None):
+    def request(self, path, alias="release", password=fixtures.PASSWORD, key_password=None):
         return {
             "contract": CONTRACT_VERSION,
             "evaluatedAt": WHEN,
             "platform": "android",
-            "purpose": purpose,
-            "storeType": store_type,
             "scope": scope(),
             "material": {
                 "path": str(path),
@@ -55,16 +53,16 @@ class AndroidMaterialTests(unittest.TestCase):
             self.assertTrue(release["signingCapable"])
             self.assertEqual(release["purpose"], "signing")
             self.assertIn("certificateSha256", release)
-            self.assertEqual(selected["purpose"], "direct_distribution")
+            self.assertEqual(selected["storeType"], "PKCS12")
+            self.assertEqual(selected["expiresAt"], release["expiresAt"])
             self.assertFalse(selected["evidence"]["trustedByPlatform"])
             self.assertFalse(selected["evidence"]["chainTrusted"])
             self.assertTrue(selected["evidence"]["privateKeyProven"])
             self.assertFalse(selected["evidence"]["playAppSigningIdentity"])
-            upload = validate_document(self.request(store, purpose="play_upload", alias="upload"))
+            upload = validate_document(self.request(store, alias="upload"))
             upload_alias = next(item for item in upload["aliases"] if item["alias"] == "upload")
             self.assertEqual(upload_alias["algorithm"], "EC")
-            self.assertEqual(upload["purpose"], "play_upload")
-            self.assertFalse(upload["evidence"]["playAppSigningIdentity"])
+            self.assertEqual(upload_alias["purpose"], "signing")
 
     def test_jks_wrong_password_expired_and_not_yet_valid(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -72,11 +70,12 @@ class AndroidMaterialTests(unittest.TestCase):
             key = fixtures.rsa_key()
             store = root / "app.jks"
             fixtures.keystore(store, "release", key, fixtures.certificate(key, "JKS"), "JKS")
-            parsed = validate_document(self.request(store, store_type="JKS"))
+            parsed = validate_document(self.request(store))
+            self.assertEqual(parsed["storeType"], "JKS")
             self.assertIn("macos_capability_unavailable", parsed["reasonCodes"])
             self.assertTrue(parsed["aliases"][0]["signingCapable"])
             with self.assertRaises(ValidationFailure) as wrong:
-                validate_document(self.request(store, store_type="JKS", password="incorrect-password"))
+                validate_document(self.request(store, password="incorrect-password"))
             self.assertEqual(wrong.exception.code, "wrong_password")
             early = root / "early.p12"
             late = root / "late.p12"
@@ -108,11 +107,11 @@ class AndroidMaterialTests(unittest.TestCase):
             fixtures.keystore(
                 jks, "release", key, fixtures.certificate(key, "Separate"), "JKS",
                 store_password=fixtures.PASSWORD, key_password="different-key-password")
-            parsed = validate_document(self.request(
-                jks, store_type="JKS", key_password="different-key-password"))
+            parsed = validate_document(self.request(jks, key_password="different-key-password"))
+            self.assertEqual(parsed["storeType"], "JKS")
             self.assertTrue(parsed["aliases"][0]["signingCapable"])
             with self.assertRaises(ValidationFailure) as wrong_key:
-                validate_document(self.request(jks, store_type="JKS", key_password="not-the-key-password"))
+                validate_document(self.request(jks, key_password="not-the-key-password"))
             self.assertEqual(wrong_key.exception.code, "wrong_key_password")
 
     def test_unknown_format_is_not_a_password_failure(self):
@@ -120,11 +119,8 @@ class AndroidMaterialTests(unittest.TestCase):
             path = Path(directory) / "unknown.bin"
             path.write_bytes(b"not-a-keystore")
             with self.assertRaises(ValidationFailure) as unknown:
-                validate_document(self.request(path, store_type="PKCS12"))
+                validate_document(self.request(path))
             self.assertEqual(unknown.exception.code, "unknown_format")
-            with self.assertRaises(ValidationFailure) as unsupported:
-                validate_document(self.request(path, store_type="BCFKS"))
-            self.assertEqual(unsupported.exception.code, "unsupported_input")
             encoded = json.dumps(self.request(path))
             self.assertNotIn("BEGIN PRIVATE", encoded)
 

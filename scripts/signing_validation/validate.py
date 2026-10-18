@@ -34,12 +34,15 @@ def validate_document(document):
     reasons = list(body["reasonCodes"])
     if pending and REASON_MACOS_REQUIRED not in reasons:
         reasons.append(REASON_MACOS_REQUIRED)
-    status = "valid" if reasons == ["ok"] and not pending else "invalid"
+    # Tool presence never counts as execution. Apple valid also needs chain
+    # trust, and a profile needs a CMS signature check that actually ran.
+    evidence = body.setdefault("evidence", {})
+    trust_proven = _trust_proven(body.get("platform"), body.get("kind"), evidence)
+    status = "valid" if reasons == ["ok"] and not pending and trust_proven else "invalid"
     if status == "invalid":
         reasons = [code for code in reasons if code != "ok"] or ["tool_failed"]
     body["status"] = status
     body["reasonCodes"] = reasons
-    evidence = body.setdefault("evidence", {})
     evidence["notExecuted"] = pending
     evidence["installable"] = False
     evidence["trustedByPlatform"] = False
@@ -74,6 +77,26 @@ def main():
         _fail("tool_failed", "validation failed closed", scope)
     sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
+
+
+def _trust_proven(platform, kind, evidence):
+    """Return whether the checks required for status=valid actually ran.
+
+    Android may be valid from the private-key challenge alone. An Apple
+    certificate also needs chain trust. A profile also needs CMS verification
+    and chain trust. Flags left false because the command never ran stay false.
+    """
+    if platform == "android":
+        return evidence.get("privateKeyProven") is True
+    if platform != "ios":
+        return False
+    if evidence.get("chainTrusted") is not True:
+        return False
+    if kind == "certificate":
+        return evidence.get("privateKeyProven") is True
+    if kind == "provisioning_profile":
+        return evidence.get("cmsSignatureVerified") is True
+    return False
 
 
 def _partial_scope(scope):

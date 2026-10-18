@@ -7,7 +7,7 @@ an app, or sign a product.
 """
 
 CONTRACT_VERSION = "signing-material-validation/v1"
-VALIDATOR_VERSION = "1.1.0"
+VALIDATOR_VERSION = "1.2.0"
 
 MAX_MATERIAL_BYTES = 2 * 1024 * 1024
 MAX_PASSWORD_BYTES = 256
@@ -20,13 +20,20 @@ MAX_EXPANDED_BYTES = 4 * 1024 * 1024
 TOOL_TIMEOUT_SECONDS = 20
 
 PLATFORMS = ("android", "ios")
-ANDROID_PURPOSES = ("direct_distribution", "play_upload")
 ANDROID_FORMATS = ("JKS", "PKCS12")
 APPLE_KINDS = ("certificate", "provisioning_profile")
+# Offline names stay snake_case. Hawk distributionMethod uses hyphens.
 APPLE_DISTRIBUTIONS = ("development", "ad_hoc", "enterprise", "app_store")
+HAWK_DISTRIBUTIONS = {
+    "development": "development",
+    "ad_hoc": "ad-hoc",
+    "enterprise": "enterprise",
+    "app_store": "app-store",
+}
 PUBLIC_KEY_ALGORITHMS = ("RSA", "EC")
 
-# Stable machine codes. Messages stay generic so tool stderr never leaks.
+# Offline machine codes. Messages stay generic so tool stderr never leaks.
+# Hawk's published allowlist is HAWK_REASON_CODES; the job translates.
 REASON_OK = "ok"
 REASON_SCOPE_MISMATCH = "scope_mismatch"
 REASON_UNSUPPORTED_INPUT = "unsupported_input"
@@ -55,6 +62,52 @@ REASON_PROFILE_EXPIRED = "profile_expired"
 REASON_MACOS_REQUIRED = "macos_capability_unavailable"
 REASON_TOOL_FAILED = "tool_failed"
 REASON_IDEMPOTENT_FAILURE = "idempotent_terminal_failure"
+
+# Published Hawk reason allowlist. A valid result uses an empty list.
+HAWK_REASON_CODES = frozenset({
+    "wrong_password",
+    "invalid_material",
+    "unsupported_format",
+    "unsupported_algorithm",
+    "expired",
+    "not_yet_valid",
+    "private_key_mismatch",
+    "signature_invalid",
+    "untrusted_chain",
+    "scope_mismatch",
+    "tool_unavailable",
+    "resource_limit",
+    "validation_failed",
+    "macos_capability_unavailable",
+    "path_rejected",
+    "entitlement_mismatch",
+})
+
+# Offline codes that are not in the Hawk list. Unmapped codes fail closed.
+HAWK_REASON_MAP = {
+    "malformed_material": "invalid_material",
+    "unknown_format": "unsupported_format",
+    "size_limit": "resource_limit",
+    "wrong_key_password": "wrong_password",
+    "alias_not_found": "invalid_material",
+    "ambiguous_alias": "invalid_material",
+    "certificate_not_yet_valid": "not_yet_valid",
+    "certificate_expired": "expired",
+    "chain_invalid": "untrusted_chain",
+    "cms_invalid": "signature_invalid",
+    "profile_tampered": "signature_invalid",
+    "team_mismatch": "scope_mismatch",
+    "bundle_mismatch": "scope_mismatch",
+    "certificate_mismatch": "scope_mismatch",
+    "entitlements_mismatch": "entitlement_mismatch",
+    "distribution_mismatch": "scope_mismatch",
+    "profile_not_yet_valid": "not_yet_valid",
+    "profile_expired": "expired",
+    "tool_failed": "validation_failed",
+    "unsupported_input": "invalid_material",
+    "idempotent_terminal_failure": "validation_failed",
+    "result_rejected": "validation_failed",
+}
 
 # Material validation never grants compile, sign, publish, or asset management.
 STAGE = "validate"

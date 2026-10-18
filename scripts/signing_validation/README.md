@@ -13,7 +13,8 @@ result is not posted as a Hawk result.
 
 JSON on stdin. `contract` must be `signing-material-validation/v1`.
 `evaluatedAt` is an explicit UTC instant (`...Z`); the process clock is not the
-validity authority. `scope.stage` must be `validate`.
+validity authority. The controlled job supplies that instant once and uses it
+for both `evaluatedAt` and Hawk `validatedAt`. `scope.stage` must be `validate`.
 
 ```json
 {
@@ -45,10 +46,11 @@ profile are separate requests. Passwords are read from the JSON object and
 handed to tools through the environment, never through argv. Tests may pass
 `material.bytesBase64` instead of `material.path`.
 
-Android `purpose` is `direct_distribution` or `play_upload`. `play_upload`
-records upload-key metadata only. It does not claim Play app-signing identity.
-Each alias reports `purpose: signing`, which is the material capability. The
-App distribution choice stays on the request `purpose`.
+Android store type is detected as JKS or PKCS#12. A declared `storeType` or
+direct/Play purpose is not required. Each alias reports `purpose: signing`,
+which is the material capability. Direct versus Play upload is a later
+packaging choice and is not part of this result. `expiresAt` on the Android
+result is the selected alias expiry.
 
 Apple `expectations` may include `teamId`, `bundleId`, `distribution`,
 `certificateSha256`, and `entitlements`. A caller-supplied distribution never
@@ -68,13 +70,15 @@ Profile metadata contains `uuid`, `teamId`, `applicationIdentifier`,
 `cmsSignatureVerified`. The adapter maps those facts into the Hawk result
 without inventing missing chain or entitlement values.
 
-`status` is `valid` only when this toolchain actually ran the trust checks and
-no reason other than `ok` remains. On this Linux host those checks are
-`security_cms_anchor_verify`, `keychain_import`, and `codesign_identity_check`.
-They stay in `evidence.notExecuted`, and the result is `invalid` with
-`macos_capability_unavailable`. OpenSSL `cms -verify -noverify` only parses a
-profile. `installable` and `trustedByPlatform` stay false. `signingCapable`
-reports the synthetic challenge only.
+`status` is `valid` only when the required checks actually ran and no other
+reason remains. Android needs the private-key challenge. An Apple certificate
+also needs chain trust. A profile also needs a CMS signature check and chain
+trust. `security_cms_anchor_verify`, `keychain_import`, and
+`codesign_identity_check` stay in `evidence.notExecuted` until this process
+runs them. Finding `security` or `codesign` on macOS does not clear that list
+and does not make an Apple result valid. OpenSSL `cms -verify -noverify` only
+parses a profile. `installable` and `trustedByPlatform` stay false.
+`signingCapable` reports the synthetic challenge only.
 
 Passwords, private keys, PKCS#12 bytes, profiles, tokens, and URLs are rejected
 if they appear in the result. Tool stderr is discarded and is not copied into
@@ -103,15 +107,22 @@ or upload.
 `validate-signing-material.yml` with `validator_sha` set to the commit that
 contains this validator.
 
-The reusable job refuses `pull_request` and public repositories. It checks out
-`validator_sha` with `actions/checkout` v4.2.2
-(`11bd71901bbe5b1630ceea73d27597364c9af683`) and Python setup v5.6.0
-(`a26af69be951a213d495a4c3e4e4022e16d87065`). `scripts/signing_validation/exchange-validation`
+The reusable job refuses `pull_request` and public repositories. It does not
+require `github.event_name` to be `workflow_call`, because the caller event
+remains `workflow_dispatch`. It checks out `validator_sha` with
+`actions/checkout` v4.2.2 (`11bd71901bbe5b1630ceea73d27597364c9af683`), Python
+setup v5.6.0 (`a26af69be951a213d495a4c3e4e4022e16d87065`), and Temurin 17 via
+`actions/setup-java` v4.7.0
+(`cf277c60eb25467037889841efdb72551f06f6c3`). The caller passes the existing
+`HAWK_OIDC_AUDIENCE` secret. `scripts/signing_validation/exchange-validation`
 calls `POST /api/v1/buildbox/validations/{id}/auth/exchange` with
 `{oidcToken, dispatchProof}`. The dispatch proof is read from
 `GITHUB_EVENT_PATH` and is not interpolated into the workflow.
 `scripts/signing_validation/validate-material` reads `GET /material`, writes
 the offline request, and posts the translated public body to `POST /result`.
+Published `expected: {}` is accepted. Hawk `reasonCodes` use the published
+allowlist (`entitlement_mismatch`, empty when valid). Profile
+`distributionMethod` is `development`, `ad-hoc`, `enterprise`, or `app-store`.
 The job does not sign an application.
 
 Hawk still owns the API, SQL, and generated client. This repository does not

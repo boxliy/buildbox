@@ -30,7 +30,6 @@ class LimitTests(unittest.TestCase):
     def test_scope_rejects_sign_stage_and_kind_mismatch(self):
         document = envelope(
             "android", None, "android_keystore",
-            purpose="direct_distribution", storeType="PKCS12",
             material={"path": "unused", "storePassword": "x", "keyPassword": "x"},
         )
         document["scope"]["stage"] = "sign"

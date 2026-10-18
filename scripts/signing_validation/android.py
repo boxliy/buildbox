@@ -1,7 +1,8 @@
 """Validate an Android keystore without signing an application.
 
-Structural checks and a synthetic challenge can set signingCapable. They do
-not produce status=valid when the macOS trust toolchain was not executed.
+A synthetic private-key challenge can set signingCapable. The store type is
+detected from the container. Alias purpose is the material capability
+`signing`; direct versus Play upload is chosen later by packaging.
 """
 
 import os
@@ -14,8 +15,6 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 
 from .contract import (
-    ANDROID_FORMATS,
-    ANDROID_PURPOSES,
     MAX_ALIASES,
     MAX_CHAIN,
     PUBLIC_KEY_ALGORITHMS,
@@ -47,17 +46,11 @@ _ALIAS_HEADER = re.compile(r"(?m)^Alias name:\s*(.+)$")
 def validate(request, evaluated_at):
     if not which("keytool") or not which("openssl"):
         raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "android validation requires keytool and openssl")
-    purpose = request.get("purpose")
-    if purpose not in ANDROID_PURPOSES:
-        raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "android purpose is not supported")
-    store_type = request.get("storeType")
-    if store_type not in ANDROID_FORMATS:
-        raise ValidationFailure(REASON_UNSUPPORTED_INPUT, "android store type is not supported")
     material = request.get("material") or {}
     password = bounded_password(material.get("storePassword"), "storePassword")
     key_password = bounded_password(material.get("keyPassword") or material.get("storePassword"), "keyPassword")
     data = _material_bytes(material)
-    _classify_container(data, store_type)
+    store_type = _detect_store_type(data)
     alias = material.get("alias")
     if alias is not None:
         alias = safe_name(alias, "alias")
@@ -76,13 +69,14 @@ def validate(request, evaluated_at):
     private_key_proven = selected_entry.get("signingCapable") is True
     for item in entries:
         item.pop("_validity", None)
+    selected_expiry = selected_entry.get("expiresAt")
     return {
         "platform": "android",
-        "purpose": purpose,
         "storeType": store_type,
         "status": "valid" if reasons == [REASON_OK] else "invalid",
         "reasonCodes": reasons,
         "selectedAlias": selected,
+        "expiresAt": selected_expiry,
         "aliasCount": len(aliases),
         "aliases": entries,
         "evidence": {
@@ -110,18 +104,15 @@ def _material_bytes(material):
         raise ValidationFailure(REASON_MALFORMED_MATERIAL, "android material encoding is invalid") from error
 
 
-def _classify_container(data, store_type):
-    """Separate a damaged or unknown container from a later password rejection."""
-    if store_type == "JKS":
-        if data[:4] != b"\xfe\xed\xfe\xed":
-            raise ValidationFailure(REASON_UNKNOWN_FORMAT, "JKS magic is missing")
-        return
+def _detect_store_type(data):
+    """Identify JKS or PKCS#12. A declared store type is not required."""
     if data[:4] == b"\xfe\xed\xfe\xed":
-        raise ValidationFailure(REASON_UNKNOWN_FORMAT, "container is JKS, not PKCS12")
+        return "JKS"
     if data[:2] == b"PK":
-        raise ValidationFailure(REASON_UNKNOWN_FORMAT, "container is a zip archive, not PKCS12")
-    if len(data) < 4 or data[0] != 0x30:
-        raise ValidationFailure(REASON_UNKNOWN_FORMAT, "container is not PKCS12")
+        raise ValidationFailure(REASON_UNKNOWN_FORMAT, "container is a zip archive, not a keystore")
+    if len(data) >= 4 and data[0] == 0x30:
+        return "PKCS12"
+    raise ValidationFailure(REASON_UNKNOWN_FORMAT, "container is not JKS or PKCS12")
 
 
 def _aliases(keystore, store_type, env):

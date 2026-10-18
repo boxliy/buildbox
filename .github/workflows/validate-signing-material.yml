@@ -17,6 +17,9 @@ on:
       validator_sha:
         required: true
         type: string
+    secrets:
+      HAWK_OIDC_AUDIENCE:
+        required: true
 
 permissions:
   contents: read
@@ -26,7 +29,6 @@ jobs:
     if: >-
       github.repository_owner == 'boxliy' &&
       github.event.repository.private == true &&
-      github.event_name == 'workflow_call' &&
       github.event_name != 'pull_request'
     runs-on: macos-15
     timeout-minutes: 10
@@ -45,7 +47,7 @@ jobs:
           [[ "$VALIDATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$ ]]
           [[ "$VALIDATOR_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$HAWK_BASE_URL" == https://* ]]
-          [[ "${{ github.event_name }}" == "workflow_call" ]]
+          [[ "${{ github.event_name }}" != "pull_request" ]]
           [[ "${{ github.event.repository.private }}" == "true" ]]
 
       - name: Checkout pinned validator
@@ -68,7 +70,15 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Setup Android keytool
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Exchange validation credential and run validator
+        env:
+          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
         shell: bash
         run: |
           set -euo pipefail
