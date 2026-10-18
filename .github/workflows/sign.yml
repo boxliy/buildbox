@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 9d0717314dbc602b7e302347f0c27125e6fab42e
+          ref: 5be050656e1166452b4c6772fe7df4257f26dc05
           persist-credentials: false
 
       - name: Setup trusted Python
