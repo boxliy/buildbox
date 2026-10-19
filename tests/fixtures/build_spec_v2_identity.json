@@ -1,0 +1,121 @@
+{
+  "input": {
+    "schemaVersion": 2,
+    "tenantId": "9007199254740993",
+    "appId": "42",
+    "platform": "android",
+    "targets": [
+      "aab",
+      "apk"
+    ],
+    "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "appProfile": {
+      "revision": 3,
+      "label": "繁體\n\"quoted\"",
+      "optional": null,
+      "enabled": true
+    },
+    "artifactPrefix": "excluded/",
+    "frozenInputs": {
+      "tenantId": "9007199254740993",
+      "appId": "42",
+      "platform": "android",
+      "sourceRepo": "boxliy/aviary",
+      "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "flutterVersion": "3.47.4",
+      "fvmrc": {
+        "path": "waterfowl/.fvmrc",
+        "sha256": "ec0671a106fda23aa25ac11713e54586a10233e9b0fe19f1e6de19e54361bf07"
+      },
+      "versionName": "1.2.3",
+      "buildNumber": 42,
+      "brandAssets": [
+        {
+          "path": "waterfowl/apps/swan/assets/fixture/icon.svg",
+          "sha256": "900fbe934249ad120004bd24adf66aad8817d89586273c0cc50e187bddebb601"
+        }
+      ],
+      "builtinResources": [],
+      "languages": [],
+      "signingReference": "signing:isolated-fixture"
+    },
+    "signing": {
+      "source": "tenant",
+      "versionId": "100",
+      "assetId": "99",
+      "version": 2,
+      "certificateSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "alias": "release",
+      "purpose": "play_upload",
+      "distributionMethod": "play",
+      "teamId": null,
+      "materials": [
+        {
+          "assetId": "99",
+          "versionId": "100",
+          "version": 2,
+          "materialSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "metadata": {
+            "aliases": [
+              {
+                "alias": "release",
+                "algorithm": "EC",
+                "certificateSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "signingCapable": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "packagingRevision": 7,
+    "brandResources": [
+      {
+        "path": "waterfowl/.aviary-brand/icon.png",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resourceId": "101",
+        "revision": 3,
+        "contentBase64": "Zml4dHVyZQ=="
+      }
+    ],
+    "assembly": {
+      "revision": 1,
+      "catalogDigest": "sha256:de41ee798ad387cd90a672735d6aa0de921fbdc550e05c0baf5373ef94a997ca",
+      "catalog": {
+        "schemaVersion": 1,
+        "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "flutterVersion": "3.47.4",
+        "lockfileDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "presentations": [
+          {
+            "feature": "HOME",
+            "presentation": "PLUME",
+            "platforms": [
+              "android",
+              "ios"
+            ],
+            "requiredFeatures": [],
+            "plugins": [],
+            "permissions": [],
+            "resources": [],
+            "messages": {}
+          }
+        ]
+      },
+      "selections": [
+        {
+          "feature": "HOME",
+          "presentation": "PLUME"
+        }
+      ]
+    },
+    "dartDefines": {
+      "SWAN_APP_ID": "42",
+      "SWAN_APP_NAME": "Native 繁體",
+      "SWAN_HAWK_BASE_URL": "https://api.test",
+      "SWAN_INTERNAL_BUILD": "false"
+    }
+  },
+  "canonicalJson": "{\"appId\":\"42\",\"appProfile\":{\"enabled\":true,\"label\":\"繁體\\n\\\"quoted\\\"\",\"optional\":null,\"revision\":3},\"assembly\":{\"catalog\":{\"flutterVersion\":\"3.47.4\",\"lockfileDigest\":\"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"presentations\":[{\"feature\":\"HOME\",\"messages\":{},\"permissions\":[],\"platforms\":[\"android\",\"ios\"],\"plugins\":[],\"presentation\":\"PLUME\",\"requiredFeatures\":[],\"resources\":[]}],\"schemaVersion\":1,\"sourceCommit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"catalogDigest\":\"sha256:de41ee798ad387cd90a672735d6aa0de921fbdc550e05c0baf5373ef94a997ca\",\"revision\":1,\"selections\":[{\"feature\":\"HOME\",\"presentation\":\"PLUME\"}]},\"brandResources\":[{\"contentBase64\":\"Zml4dHVyZQ==\",\"path\":\"waterfowl/.aviary-brand/icon.png\",\"resourceId\":\"101\",\"revision\":3,\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}],\"commitSha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"dartDefines\":{\"SWAN_APP_ID\":\"42\",\"SWAN_APP_NAME\":\"Native 繁體\",\"SWAN_HAWK_BASE_URL\":\"https://api.test\",\"SWAN_INTERNAL_BUILD\":\"false\"},\"frozenInputs\":{\"appId\":\"42\",\"brandAssets\":[{\"path\":\"waterfowl/apps/swan/assets/fixture/icon.svg\",\"sha256\":\"900fbe934249ad120004bd24adf66aad8817d89586273c0cc50e187bddebb601\"}],\"buildNumber\":42,\"builtinResources\":[],\"commitSha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"flutterVersion\":\"3.47.4\",\"fvmrc\":{\"path\":\"waterfowl/.fvmrc\",\"sha256\":\"ec0671a106fda23aa25ac11713e54586a10233e9b0fe19f1e6de19e54361bf07\"},\"languages\":[],\"platform\":\"android\",\"signingReference\":\"signing:isolated-fixture\",\"sourceRepo\":\"boxliy/aviary\",\"tenantId\":\"9007199254740993\",\"versionName\":\"1.2.3\"},\"packagingRevision\":7,\"platform\":\"android\",\"schemaVersion\":2,\"signing\":{\"alias\":\"release\",\"assetId\":\"99\",\"certificateSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"distributionMethod\":\"play\",\"materials\":[{\"assetId\":\"99\",\"materialSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"metadata\":{\"aliases\":[{\"algorithm\":\"EC\",\"alias\":\"release\",\"certificateSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"signingCapable\":true}]},\"version\":2,\"versionId\":\"100\"}],\"purpose\":\"play_upload\",\"source\":\"tenant\",\"teamId\":null,\"version\":2,\"versionId\":\"100\"},\"targets\":[\"aab\",\"apk\"],\"tenantId\":\"9007199254740993\"}",
+  "sha256": "sha256:f8470aa9f9f3ac4476ffa3ea41fd781c696149b74dd85741ec35df3e850838f1"
+}

@@ -4,7 +4,18 @@ set +x
 state=${BUILDBOX_STATE_DIR:?}
 source_root=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:?}/aviary-source}
 # This is untrusted compile code, executed only on the credential-free runner.
-python3 "$source_root/waterfowl/tools/build_spec_adapter.py" --spec "$state/spec.json" --source "$source_root"
+if [[ "$(jq -r '.config.schemaVersion' "$state/spec.json")" == 2 ]]; then
+  # Recheck identity after transport between prepare and the credential-free job.
+  actual=$(python3 "${BASH_SOURCE[0]%/*}/spec_identity.py" "$state/spec.json")
+  expected=$(jq -er '.specHash' "$state/spec.json")
+  [[ "$actual" == "$expected" ]] || { echo 'Prepared Spec digest mismatch' >&2; exit 1; }
+  jq -e '.config' "$state/spec.json" >"$state/native-config.json"
+  python3 "$source_root/waterfowl/tools/app_assembler/assemble.py" --spec "$state/native-config.json" --checkout "$source_root"
+else
+  # Only an already-dispatched historical snapshot can reach the v1 adapter in
+  # its pinned historical checkout. Hawk refuses all new v1 attempts.
+  python3 "$source_root/waterfowl/tools/build_spec_adapter.py" --spec "$state/spec.json" --source "$source_root"
+fi
 expected=$(jq -er '.config.frozenInputs.flutterVersion' "$state/spec.json")
 actual=$(flutter --version --machine | jq -er '.frameworkVersion')
 [[ "$actual" == "$expected" ]] || { echo 'Flutter toolchain does not match frozen inputs' >&2; exit 1; }
