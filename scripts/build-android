@@ -150,7 +150,7 @@ CUSTOM_SCHEME=${BUILDBOX_ANDROID_APPLICATION_ID//_/-}
           printf '%s\n' '  <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />'
         fi
         ;;
-      camera.capture) printf '%s\n' '  <uses-permission android:name="android.permission.CAMERA" />' ;;
+      camera.capture) : ;; # image_picker delegates capture to a camera intent.
       microphone.record) printf '%s\n' '  <uses-permission android:name="android.permission.RECORD_AUDIO" />' ;;
       location.foreground)
         printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />'

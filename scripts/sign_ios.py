@@ -13,7 +13,8 @@ import tempfile
 import zipfile
 
 from sign_android import checked_zip, request, run
-from bluetooth_usage import BLUETOOTH_KEYS, bluetooth_usage
+from bluetooth_usage import BLUETOOTH_KEYS
+from ios_privacy import validate_privacy
 
 
 def distribution_method(profile):
@@ -73,32 +74,7 @@ def validate_app(app, metadata):
         raise ValueError('iOS identity or version mismatch')
     if metadata.get('appDisplayName') and info.get('CFBundleDisplayName') != metadata['appDisplayName']:
         raise ValueError('iOS display name mismatch')
-    usage = {'camera.capture': 'NSCameraUsageDescription', 'microphone.record': 'NSMicrophoneUsageDescription',
-             'location.foreground': 'NSLocationWhenInUseUsageDescription', 'location.background': 'NSLocationAlwaysAndWhenInUseUsageDescription',
-             'photos.read': 'NSPhotoLibraryUsageDescription', 'photos.write': 'NSPhotoLibraryAddUsageDescription',
-             'biometrics.authenticate': 'NSFaceIDUsageDescription'}
-    for capability in metadata.get('deviceCapabilities', []):
-        if metadata.get('source') == 'tenant' and capability['key'] in usage:
-            description = next((p['description'] for p in capability.get('purposes', []) if p['locale'] == metadata.get('defaultLocale')), None)
-            if not description or info.get(usage[capability['key']]) != description:
-                raise ValueError('iOS usage description mismatch')
-    if metadata.get('source') == 'tenant':
-        for key, description in bluetooth_usage(metadata.get('deviceCapabilities', []), metadata.get('defaultLocale')).items():
-            if info.get(key) != description:
-                raise ValueError('iOS Bluetooth usage description mismatch')
-        for localization in metadata.get('localizations', []):
-            locale = localization['locale']
-            if not re.fullmatch(r'[A-Za-z0-9-]+', locale):
-                raise ValueError('invalid native localization')
-            expected = bluetooth_usage(metadata.get('deviceCapabilities', []), locale,
-                fallback_locale=metadata.get('defaultLocale'))
-            if expected:
-                try:
-                    localized = plistlib.loads((app / (locale + '.lproj') / 'InfoPlist.strings').read_bytes())
-                except (OSError, plistlib.InvalidFileException) as error:
-                    raise ValueError('missing or invalid localized Bluetooth usage description') from error
-                if any(localized.get(key) != description for key, description in expected.items()):
-                    raise ValueError('localized Bluetooth usage description mismatch')
+    validate_privacy(app, metadata, info)
     executable = info.get('CFBundleExecutable', '')
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', executable) or not (app / executable).is_file():
         raise ValueError('invalid iOS executable')

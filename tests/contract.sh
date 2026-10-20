@@ -331,7 +331,7 @@ assert_file_contains "$FLUTTER_LOG" "--dart-define=SWAN_EXPECTED_APP_ID=app-alph
 assert_file_not_contains "$CURL_LOG" "https://oss.example/upload.apk"
 assert_file_not_contains "$CURL_LOG" "https://oss.example/upload.aab"
 assert_file_contains "$CURL_LOG" "/api/v1/buildbox/runs/401/callback"
-assert_file_contains "$FLUTTER_LOG" "android.permission.CAMERA"
+assert_file_not_contains "$FLUTTER_LOG" "android.permission.CAMERA"
 assert_file_contains "$FLUTTER_LOG" "android.permission.ACCESS_FINE_LOCATION"
 assert_file_contains "$FLUTTER_LOG" "android.permission.USE_BIOMETRIC"
 assert_file_contains "$FLUTTER_LOG" 'android:scheme="com.example-alpha"'
