@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import sign_android
 import sign_ios
 import spec_identity
-from bluetooth_usage import bluetooth_usage
+from ios_privacy import project_privacy
 
 
 def consume(value):
@@ -47,17 +47,7 @@ def consume(value):
                 'CFBundleVersion': str(component['buildNumber']),
                 'CFBundleShortVersionString': component['versionName'],
                 'CFBundleExecutable': 'Runner', 'CFBundleSupportedPlatforms': ['iPhoneOS']}))
-            if component.get('deviceCapabilities'):
-                info_path = product / 'Info.plist'
-                info = plistlib.loads(info_path.read_bytes())
-                info.update(bluetooth_usage(component['deviceCapabilities'], component.get('defaultLocale')))
-                info_path.write_bytes(plistlib.dumps(info))
-                for localization in component.get('localizations', []):
-                    locale = localization['locale']
-                    strings = product / (locale + '.lproj') / 'InfoPlist.strings'
-                    strings.parent.mkdir()
-                    strings.write_bytes(plistlib.dumps(bluetooth_usage(component['deviceCapabilities'], locale,
-                        fallback_locale=component.get('defaultLocale'))))
+            project_privacy(product, component)
             method = metadata['distributionMethod']
             profile = {'UUID': component['profileUuid'], 'TeamIdentifier': [metadata['teamId']],
                 'DeveloperCertificates': [b'fixture'], 'ExpirationDate': datetime.datetime(2099, 1, 1),
