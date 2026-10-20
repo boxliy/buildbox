@@ -40,6 +40,9 @@ class IosSigningPolicyTests(unittest.TestCase):
         self.assertEqual(sign_ios.validate_profile(broad, push, b'fixture')['aps-environment'], 'production')
         with self.assertRaises(ValueError):
             sign_ios.validate_profile(profile, push, b'fixture')
+        bluetooth = dict(metadata, deviceCapabilities=[{'key': 'bluetooth.scan'}, {'key': 'bluetooth.connect'}])
+        self.assertEqual(sign_ios.validate_profile(profile, bluetooth, b'fixture'), profile['Entitlements'])
+
 
 
     def test_unsigned_app_requires_device_identity_and_no_extensions(self):
@@ -79,7 +82,7 @@ class IosCapabilityContractTests(unittest.TestCase):
         import os
         import subprocess
         # The cross-repository Rust test supplies the real serialized enum values.
-        keys = json.loads(os.environ.get('HAWK_CAPABILITY_KEYS', '["photos.read", "photos.write"]'))
+        keys = json.loads(os.environ.get('HAWK_CAPABILITY_KEYS', '["photos.read", "photos.write", "bluetooth.scan", "bluetooth.connect"]'))
         source = (Path(__file__).resolve().parents[1] / 'scripts/build-ios').read_text()
         script = source.split("<<'PYNAME'\n", 1)[1].split('\nPYNAME', 1)[0]
         with tempfile.TemporaryDirectory() as directory:
@@ -90,7 +93,7 @@ class IosCapabilityContractTests(unittest.TestCase):
             for capabilities, accepted in [(keys, True), ([], True), (['storage.photos.read'], False), (['unknown'], False)]:
                 info.write_bytes(plistlib.dumps({}))
                 spec.write_text(json.dumps({'config': {'appProfile': {'deviceCapabilities': [{'key': key} for key in capabilities]}}}))
-                result = subprocess.run([sys.executable, '-c', script, 'Fixture App', str(spec)], cwd=root, capture_output=True)
+                result = subprocess.run([sys.executable, '-c', script, 'Fixture App', str(spec), str(Path(__file__).resolve().parents[1] / 'scripts')], cwd=root, capture_output=True)
                 self.assertEqual(result.returncode == 0, accepted, result.stderr)
                 profile = {'TeamIdentifier': ['TEAM123456'], 'DeveloperCertificates': [b'fixture'],
                     'ExpirationDate': datetime.datetime(2099, 1, 1), 'ProvisionedDevices': ['fixture-device'],
@@ -103,6 +106,7 @@ class IosCapabilityContractTests(unittest.TestCase):
                     plist = plistlib.loads(info.read_bytes())
                     self.assertEqual('NSPhotoLibraryUsageDescription' in plist, 'photos.read' in capabilities)
                     self.assertEqual('NSPhotoLibraryAddUsageDescription' in plist, 'photos.write' in capabilities)
+                    self.assertEqual('NSBluetoothAlwaysUsageDescription' in plist, any(k.startswith('bluetooth.') for k in capabilities))
                 else:
                     with self.assertRaises(ValueError):
                         sign_ios.validate_profile(profile, metadata, b'fixture')
@@ -233,3 +237,24 @@ class NestedSigningOrderTests(unittest.TestCase):
             with zipfile.ZipFile(root / 'artifacts/swan-release.ipa') as archive:
                 self.assertIn('Payload/Runner.app/Info.plist', archive.namelist())
                 self.assertIn('Payload/Runner.app/PlugIns/Share.appex/Info.plist', archive.namelist())
+
+
+class BluetoothUsageTests(unittest.TestCase):
+    def test_shared_usage_preserves_order_deduplicates_and_rejects_missing_purpose(self):
+        from bluetooth_usage import bluetooth_usage
+        def capability(key, text):
+            return {'key': key, 'purposes': [{'locale': 'en', 'description': text}]}
+        scan = capability('bluetooth.scan', 'Find printers.')
+        connect = capability('bluetooth.connect', 'Connect printers.')
+        self.assertEqual(bluetooth_usage([connect, scan], 'en'),
+            {'NSBluetoothAlwaysUsageDescription': 'Find printers. Connect printers.'})
+        self.assertEqual(bluetooth_usage([scan, capability('bluetooth.connect', 'Find printers.')], 'en'),
+            {'NSBluetoothAlwaysUsageDescription': 'Find printers.'})
+        self.assertEqual(bluetooth_usage([connect], 'en'),
+            {'NSBluetoothAlwaysUsageDescription': 'Connect printers.'})
+        with self.assertRaisesRegex(ValueError, 'missing frozen Bluetooth'):
+            bluetooth_usage([scan, {'key': 'bluetooth.connect'}], 'en')
+        self.assertEqual(bluetooth_usage([], 'en'), {})
+        localized_scan = dict(scan, purposes=scan['purposes'] + [{'locale': 'zh-CN', 'description': '查找打印机。'}])
+        self.assertEqual(bluetooth_usage([connect, localized_scan], 'zh-CN', fallback_locale='en'),
+            {'NSBluetoothAlwaysUsageDescription': '查找打印机。 Connect printers.'})

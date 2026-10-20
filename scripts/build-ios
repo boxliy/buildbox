@@ -35,9 +35,11 @@ python3 "$script_dir/configure_ios.py" "$state/spec.json" ios/Runner.xcodeproj
 flutter build ios --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "--dart-define-from-file=$state/ios-dart-defines.json"
 # Produce only the unsigned device app; distribution signing is isolated below.
 # Plist mutation is data-only and occurs before isolated signing.
-python3 - "$name" "$state/spec.json" <<'PYNAME'
+python3 - "$name" "$state/spec.json" "$script_dir" <<'PYNAME'
 from pathlib import Path
 import json, plistlib, re, sys
+sys.path.insert(0, sys.argv[3])
+from bluetooth_usage import BLUETOOTH_KEYS, bluetooth_usage
 spec=json.loads(Path(sys.argv[2]).read_text())
 profile=spec['config']['appProfile']
 capabilities={item['key'] for item in profile.get('deviceCapabilities', [])}
@@ -52,7 +54,7 @@ usage={
  'photos.write': ('NSPhotoLibraryAddUsageDescription', 'photo library'),
  'biometrics.authenticate': ('NSFaceIDUsageDescription', 'biometric authentication'),
 }
-if not capabilities <= set(usage) | {'notifications.push', 'background.execution'}:
+if not capabilities <= set(usage) | set(BLUETOOTH_KEYS) | {'notifications.push', 'background.execution'}:
     raise SystemExit('unsupported iOS native capability')
 for app in Path('build/ios/iphoneos').glob('*.app'):
     for component in [app, *(p for p in app.rglob('*') if p.suffix in {'.app', '.appex'} and p.is_dir())]:
@@ -68,6 +70,8 @@ for info in Path('build/ios/iphoneos').glob('*.app/Info.plist'):
             if spec['config'].get('signing', {}).get('source') == 'tenant' and not description:
                 raise SystemExit('missing frozen usage description')
             body[key] = description or sys.argv[1] + ' uses ' + purpose + ' for enabled app features.'
+    body.update(bluetooth_usage(profile.get('deviceCapabilities', []), locale,
+        fallback_name=None if spec['config'].get('signing', {}).get('source') == 'tenant' else sys.argv[1]))
     if 'location.background' in capabilities:
         body['NSLocationWhenInUseUsageDescription'] = purposes.get('location.foreground', {}).get(locale) or purposes.get('location.background', {}).get(locale) or sys.argv[1] + ' uses location for enabled app features.'
     modes=[]
@@ -86,6 +90,8 @@ for info in Path('build/ios/iphoneos').glob('*.app/Info.plist'):
                 strings[key]=purposes[capability][language]
         if 'location.background' in capabilities and purposes.get('location.background', {}).get(language):
             strings.setdefault('NSLocationWhenInUseUsageDescription', purposes['location.background'][language])
+        strings.update(bluetooth_usage(profile.get('deviceCapabilities', []), language, fallback_locale=locale,
+            fallback_name=None if spec['config'].get('signing', {}).get('source') == 'tenant' else sys.argv[1]))
         directory=info.parent / (language + '.lproj')
         directory.mkdir(exist_ok=True)
         (directory / 'InfoPlist.strings').write_bytes(plistlib.dumps(strings))

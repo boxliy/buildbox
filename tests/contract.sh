@@ -239,7 +239,28 @@ if "$ROOT/scripts/build-android" 2>"$TMP_DIR/compile-credential.err"; then
   echo 'compile accepted a stage credential' >&2; exit 1
 fi
 assert_file_contains "$TMP_DIR/compile-credential.err" 'compile runner must not carry stage credentials'
-env -u HAWK_STAGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN "$ROOT/scripts/build-android"
+# Independent logical capabilities must work on both legacy and current Android.
+cp "$BUILDBOX_STATE_DIR/spec.json" "$TMP_DIR/pre-bluetooth-spec.json"
+for capabilities in '["bluetooth.scan"]' '["bluetooth.connect"]' '["bluetooth.scan","bluetooth.connect"]'; do
+  jq --argjson capabilities "$capabilities" '.config.appProfile.deviceCapabilities += ($capabilities | map({key: .}))' "$TMP_DIR/pre-bluetooth-spec.json" >"$BUILDBOX_STATE_DIR/spec.json"
+  env -u HAWK_STAGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN "$ROOT/scripts/build-android"
+  manifest="$GITHUB_WORKSPACE/aviary-source/waterfowl/apps/swan/android/app/src/release/AndroidManifest.xml"
+  assert_file_contains "$manifest" 'android.permission.BLUETOOTH" android:maxSdkVersion="30"'
+  [[ $(grep -c 'android.permission.BLUETOOTH"' "$manifest") == 1 ]]
+  if [[ "$capabilities" == *bluetooth.scan* ]]; then
+    assert_file_contains "$manifest" 'android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"'
+    assert_file_contains "$manifest" 'android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"'
+    assert_file_contains "$manifest" 'android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"'
+  else
+    assert_file_not_contains "$manifest" 'android.permission.BLUETOOTH_SCAN'
+    assert_file_not_contains "$manifest" 'android.permission.BLUETOOTH_ADMIN'
+  fi
+  if [[ "$capabilities" == *bluetooth.connect* ]]; then
+    assert_file_contains "$manifest" 'android.permission.BLUETOOTH_CONNECT"'
+  else
+    assert_file_not_contains "$manifest" 'android.permission.BLUETOOTH_CONNECT'
+  fi
+done
 assert_file_contains "$FLUTTER_LOG" "SWAN_ARTIFACT_KIND=unsigned_release"
 if "$ROOT/scripts/sign-android" 2>"$TMP_DIR/unsigned.err"; then
   printf 'expected unsigned artifacts without signing material to fail\n' >&2
