@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import sign_android
 import sign_ios
 import spec_identity
+from bluetooth_usage import bluetooth_usage
 
 
 def consume(value):
@@ -35,6 +36,9 @@ def consume(value):
         entries = [(app, metadata)] + [(app / 'PlugIns' / (str(i) + '.appex'), dict(metadata, **c))
             for i, c in enumerate(metadata.get('components', []))]
         for product, component in entries:
+            if product != app:
+                component['deviceCapabilities'] = next(c.get('deviceCapabilities', [])
+                    for c in metadata.get('components', []) if c['applicationIdentifier'] == component['applicationIdentifier'])
             product.mkdir(parents=True)
             (product / 'Runner').write_bytes(b'fixture executable, not a real device build')
             (product / 'Info.plist').write_bytes(plistlib.dumps({
@@ -43,6 +47,17 @@ def consume(value):
                 'CFBundleVersion': str(component['buildNumber']),
                 'CFBundleShortVersionString': component['versionName'],
                 'CFBundleExecutable': 'Runner', 'CFBundleSupportedPlatforms': ['iPhoneOS']}))
+            if component.get('deviceCapabilities'):
+                info_path = product / 'Info.plist'
+                info = plistlib.loads(info_path.read_bytes())
+                info.update(bluetooth_usage(component['deviceCapabilities'], component.get('defaultLocale')))
+                info_path.write_bytes(plistlib.dumps(info))
+                for localization in component.get('localizations', []):
+                    locale = localization['locale']
+                    strings = product / (locale + '.lproj') / 'InfoPlist.strings'
+                    strings.parent.mkdir()
+                    strings.write_bytes(plistlib.dumps(bluetooth_usage(component['deviceCapabilities'], locale,
+                        fallback_locale=component.get('defaultLocale'))))
             method = metadata['distributionMethod']
             profile = {'UUID': component['profileUuid'], 'TeamIdentifier': [metadata['teamId']],
                 'DeveloperCertificates': [b'fixture'], 'ExpirationDate': datetime.datetime(2099, 1, 1),
