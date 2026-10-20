@@ -1,6 +1,6 @@
 # Aviary buildbox
 
-Buildbox executes immutable Build Spec v1 attempts dispatched by Hawk. The only
+Buildbox executes immutable native Build Spec v2 attempts dispatched by Hawk. The only
 workflow input is `build_run_id`. A GitHub success alone never authorizes a download.
 
 ## Execution and trust
@@ -10,7 +10,7 @@ commit SHAs. Each reusable workflow checks out its own trusted script SHA. Updat
 Hawk's approved caller and reusable workflow SHA allowlists before dispatching a
 new revision. GitHub's repository and owner **numeric IDs**, workflow path, ref,
 approved SHA, dispatch event, run ID and first run attempt must all match.
-Direct GitHub reruns cannot claim a fresh attempt; retry from Release instead.
+Direct GitHub reruns cannot claim a fresh attempt; prepare a new attempt through Hawk instead.
 
 | Stage | Authority | Work |
 | --- | --- | --- |
@@ -41,21 +41,26 @@ Required operator configuration (do not add secret values to this repository):
 ## Immutable inputs
 
 Targets are exactly `apk`, `aab`, `ipa`; aliases are rejected. Android supports APK
-and AAB together; iOS supports IPA only. The hash is the shared v1 canonical JSON
-SHA-256 of `config`, excluding `artifactPrefix`. Duplicate keys, floating point
-numbers in the outer Spec, unknown schema versions and noncanonical targets fail.
-The Rust/script identity vector is `tests/fixtures/build_spec_v1_identity.json`.
-Release payloads are canonical JSON strings inside the Spec to preserve their
-signed bytes, including UI numeric values.
+and AAB together; iOS supports IPA only. Versioned canonical JSON SHA-256 covers
+`config`, excluding the derived `artifactPrefix`. Duplicate keys, floating point
+numbers, unknown schema versions and noncanonical targets fail. The shared Rust
+and Python vectors are `tests/fixtures/build_spec_v{1,2}_identity.json`.
 
-The Swan adapter validates exact source SHA, `.fvmrc`, lockfile, resource digests,
-App/tenant scope and signed bundled Release before writing generated assets.
-Compile enforces the Flutter version and workspace lockfile. Brand inputs require
-`icon.png` (square PNG, at least 1024 pixels) and `launch.png`, with fixed digests
-and an App background color. The adapter installs signed App-scoped manifest,
-theme and FTL resources; the branding tool generates native icons/launch images.
-Android permissions and iOS usage descriptions derive from the fixed capabilities;
-unsupported capabilities fail rather than silently using default Swan branding.
+Native v2 freezes a source capability catalog, its canonical digest and one
+Presentation per selected Feature. Prepare validates the catalog/source/platform
+binding. Compile rechecks the transported Spec digest, invokes the code-owned
+`waterfowl/tools/app_assembler/assemble.py` in the exact source checkout, and
+enforces the Flutter version and committed dependency lockfile. The assembler
+rejects unknown implementations and backend-supplied code locations.
+
+Brand inputs contain immutable `icon.png` and `launch.png` bytes and digests.
+The source branding tool generates native image resources. Android permissions,
+iOS usage descriptions, application identifiers and versions derive from the
+frozen inputs. Signing still happens exclusively in isolated signing jobs.
+
+Historical v1 validation and its adapter in the pinned historical checkout remain
+available for already-dispatched tasks. Hawk refuses new v1 attempts and dispatch.
+No current native build requires a page Release or a renderer payload.
 
 ## Material validation
 

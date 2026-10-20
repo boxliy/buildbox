@@ -130,6 +130,7 @@ mkdir -p "${NATIVE_MANIFEST%/*}"
 if jq -e 'any(.config.appProfile.deviceCapabilities[]?; .key == "deep_links.verified")' "$BUILDBOX_SPEC_JSON" >/dev/null; then
   die 'deep_links.verified requires domain configuration that is not supported in phase one'
 fi
+HAS_BLUETOOTH_SCAN=$(jq -r 'any(.config.appProfile.deviceCapabilities[]?; .key == "bluetooth.scan")' "$BUILDBOX_SPEC_JSON")
 HAS_CUSTOM_SCHEME=$(jq -r 'any(.config.appProfile.deviceCapabilities[]?; .key == "deep_links.custom_scheme")' "$BUILDBOX_SPEC_JSON")
 CUSTOM_SCHEME=${BUILDBOX_ANDROID_APPLICATION_ID//_/-}
 [[ "$CUSTOM_SCHEME" =~ ^[A-Za-z][A-Za-z0-9+.-]*$ ]] || die 'derived custom URL scheme is invalid'
@@ -137,7 +138,19 @@ CUSTOM_SCHEME=${BUILDBOX_ANDROID_APPLICATION_ID//_/-}
   printf '%s\n' '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
   jq -r '.config.appProfile.deviceCapabilities[]?.key' "$BUILDBOX_SPEC_JSON" | while IFS= read -r capability; do
     case "$capability" in
-      camera.capture) printf '%s\n' '  <uses-permission android:name="android.permission.CAMERA" />' ;;
+      bluetooth.scan)
+        printf '%s\n' '  <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />'
+        printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />'
+        ;;
+      bluetooth.connect)
+        printf '%s\n' '  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />'
+        if [[ "$HAS_BLUETOOTH_SCAN" != true ]]; then
+          printf '%s\n' '  <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />'
+        fi
+        ;;
+      camera.capture) : ;; # image_picker delegates capture to a camera intent.
       microphone.record) printf '%s\n' '  <uses-permission android:name="android.permission.RECORD_AUDIO" />' ;;
       location.foreground)
         printf '%s\n' '  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />'

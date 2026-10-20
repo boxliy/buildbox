@@ -33,12 +33,22 @@ class IosCompileTests(unittest.TestCase):
                 tools.mkdir()
                 spec = {'config': {'platform': 'ios', 'targets': ['ipa'],
                     'applicationIdentifier': 'com.example.app', 'appDisplayName': 'Frozen App',
-                    'dartDefines': {}, 'appProfile': {'deviceCapabilities': []},
+                    'dartDefines': {}, 'appProfile': {'defaultLocale': 'en',
+                        'localizations': [{'locale': 'zh-CN', 'displayName': '冻结应用'}],
+                        'deviceCapabilities': [
+                            {'key': 'camera.capture', 'purposes': [{'locale': 'en', 'description': 'Capture print images.'}]},
+                            {'key': 'bluetooth.connect', 'purposes': [
+                                {'locale': 'en', 'description': 'Connect to printers.'},
+                                {'locale': 'zh-CN', 'description': '连接打印机。'}]},
+                            {'key': 'bluetooth.scan', 'purposes': [
+                                {'locale': 'en', 'description': 'Find nearby printers.'},
+                                {'locale': 'zh-CN', 'description': '查找打印机。'}]}]},
                     'frozenInputs': {'flutterVersion': '3.47.4', 'xcodeBuild': 'FIXTURE',
                         'versionName': '1.2.3', 'buildNumber': 7,
                         'iosComponentTargets': {'share': 'Share', 'watch': 'Watch'}},
-                    'signing': {'teamId': 'TEAM123456', 'distributionMethod': method,
-                        'components': [{'applicationIdentifier': 'com.example.app.share'},
+                    'signing': {'source': 'tenant', 'teamId': 'TEAM123456', 'distributionMethod': method,
+                        'components': [{'applicationIdentifier': 'com.example.app.share', 'deviceCapabilities': [
+                            {'key': 'microphone.record', 'purposes': [{'locale': 'en', 'description': 'Record a message.'}]}]},
                                        {'applicationIdentifier': 'com.example.app.watch'}]}}}
                 (state / 'spec.json').write_text(json.dumps(spec))
                 # Real build-ios/configure_ios run; only external tools are substituted.
@@ -82,7 +92,12 @@ elif name == 'flutter':
             (app / 'Runner').write_bytes(b'fixture executable')
             (app / 'Info.plist').write_bytes(plistlib.dumps(dict(CFBundleIdentifier=bundle,
                 CFBundleDisplayName='Source Name', CFBundleShortVersionString='1.2.3',
-                CFBundleVersion='7', CFBundleExecutable='Runner', CFBundleSupportedPlatforms=['iPhoneOS'])))
+                CFBundleVersion='7', CFBundleExecutable='Runner', CFBundleSupportedPlatforms=['iPhoneOS'],
+                NSCameraUsageDescription='Source camera', NSPhotoLibraryUsageDescription='Source photos',
+                NSBluetoothAlwaysUsageDescription='Source Bluetooth')))
+            stale = app / 'fr.lproj'
+            stale.mkdir()
+            (stale / 'InfoPlist.strings').write_bytes(plistlib.dumps(dict(NSPhotoLibraryUsageDescription='Source photos')))
 elif name != 'dart':
     raise AssertionError(name)
 ''')
@@ -101,7 +116,8 @@ elif name != 'dart':
                 with zipfile.ZipFile(state / 'unsigned/swan-release.ipa') as archive:
                     archive.extractall(root / 'inspect')
                 metadata = dict(spec['config'], versionName='1.2.3', buildNumber=7,
-                    components=spec['config']['signing']['components'])
+                    components=spec['config']['signing']['components'], source='tenant',
+                    defaultLocale='en', localizations=spec['config']['appProfile']['localizations'], deviceCapabilities=spec['config']['appProfile']['deviceCapabilities'])
                 apps = sign_ios.component_apps(root / 'inspect/Payload/Runner.app', metadata)
                 self.assertEqual(len(apps), 3)
                 for app, component in apps:
@@ -109,6 +125,31 @@ elif name != 'dart':
                     info = app / 'Info.plist'
                     body = plistlib.loads(info.read_bytes())
                     self.assertEqual(body['CFBundleDisplayName'], 'Frozen App')
+                    self.assertNotIn('NSPhotoLibraryUsageDescription', body)
+                    stale = plistlib.loads((app / 'fr.lproj/InfoPlist.strings').read_bytes())
+                    self.assertNotIn('NSPhotoLibraryUsageDescription', stale)
+                    if app.name != 'Runner.app':
+                        self.assertNotIn('NSCameraUsageDescription', body)
+                        self.assertNotIn('NSBluetoothAlwaysUsageDescription', body)
+                        if app.name == 'Share.appex':
+                            self.assertEqual(body['NSMicrophoneUsageDescription'], 'Record a message.')
+                    if app.name == 'Runner.app':
+                        self.assertEqual(body['NSCameraUsageDescription'], 'Capture print images.')
+                        self.assertEqual(body['NSBluetoothAlwaysUsageDescription'],
+                            'Find nearby printers. Connect to printers.')
+                        localized = plistlib.loads((app / 'zh-CN.lproj/InfoPlist.strings').read_bytes())
+                        self.assertEqual(localized['NSBluetoothAlwaysUsageDescription'], '查找打印机。 连接打印机。')
+                        info.write_bytes(plistlib.dumps(dict(body, NSBluetoothAlwaysUsageDescription='Connect to printers.')))
+                        with self.assertRaisesRegex(ValueError, 'Bluetooth usage'):
+                            sign_ios.validate_app(app, component)
+                        info.write_bytes(plistlib.dumps(body))
+                        strings_file = app / 'zh-CN.lproj/InfoPlist.strings'
+                        original_strings = strings_file.read_bytes()
+                        for tampered in ({'NSBluetoothAlwaysUsageDescription': '连接打印机。'}, {}):
+                            strings_file.write_bytes(plistlib.dumps(tampered))
+                            with self.assertRaisesRegex(ValueError, 'localized Bluetooth'):
+                                sign_ios.validate_app(app, component)
+                        strings_file.write_bytes(original_strings)
                     info.write_bytes(plistlib.dumps(dict(body, CFBundleDisplayName='Source Name')))
                     with self.assertRaises(ValueError):
                         sign_ios.validate_app(app, component)

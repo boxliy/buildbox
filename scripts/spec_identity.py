@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canonical Build Spec v1 identity shared with Hawk's fixed test vector."""
+"""Canonical versioned Build Spec identity shared with Hawk's fixed test vector."""
 import base64
 import hashlib
 import json
@@ -32,7 +32,7 @@ def load(text):
 
 
 def digest(config):
-    if type(config.get('schemaVersion')) is not int or config['schemaVersion'] != 1:
+    if type(config.get('schemaVersion')) is not int or config['schemaVersion'] not in (1, 2):
         raise ValueError('unsupported Build Spec version')
     identity = {key: value for key, value in config.items() if key != 'artifactPrefix'}
     body = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
@@ -40,12 +40,18 @@ def digest(config):
 
 
 def validate(config):
-    """Reject unknown current-v1 inputs before preparing any application source."""
+    """Validate versioned frozen inputs before preparing application source."""
     allowed = {'schemaVersion', 'tenantId', 'appId', 'releaseId', 'releaseRevision', 'releaseChannel', 'platform', 'targets',
                'commitSha', 'sourceRepo', 'appProfile', 'artifactPrefix', 'frozenInputs', 'appDisplayName',
                'appName', 'appSlug', 'tenantSlug', 'applicationIdentifier', 'androidApplicationId', 'iosBundleId',
                'dartDefines', 'storageProfileId', 'storageProfileRevision', 'signing', 'bundledReleaseCanonicalJson',
                'packagingRevision', 'brandResources', 'swanConfig'}
+    if config.get('schemaVersion') == 2:
+        allowed -= {'releaseId', 'releaseRevision', 'releaseChannel', 'bundledReleaseCanonicalJson', 'swanConfig'}
+        allowed.add('assembly')
+        validate_native(config)
+    elif config.get('schemaVersion') != 1 or type(config.get('schemaVersion')) is not int:
+        raise ValueError('unsupported Build Spec version')
     if set(config) - allowed:
         raise ValueError('unknown Build Spec field')
     if 'releaseChannel' in config:
@@ -104,7 +110,7 @@ def validate(config):
     for group in ('brandAssets', 'builtinResources', 'languages'):
         values = frozen[group]
         paths = [v['path'] for v in values]
-        if not 1 <= len(values) <= 256 or paths != sorted(set(paths)):
+        if not (0 if config['schemaVersion'] == 2 and group != 'brandAssets' else 1) <= len(values) <= 256 or paths != sorted(set(paths)):
             raise ValueError('invalid resource group')
         for value in values:
             if (set(value) != {'path', 'sha256'} or not re.fullmatch(r'waterfowl/[A-Za-z0-9/._@-]+', value['path'])
@@ -137,9 +143,44 @@ def validate(config):
     return config
 
 
+def validate_native(config):
+    assembly = config['assembly']
+    if set(assembly) != {'revision', 'catalogDigest', 'catalog', 'selections'}:
+        raise ValueError('unknown native assembly field')
+    if type(assembly['revision']) is not int or assembly['revision'] < 1:
+        raise ValueError('invalid assembly revision')
+    catalog = assembly['catalog']
+    if (set(catalog) != {'schemaVersion', 'sourceCommit', 'flutterVersion', 'lockfileDigest', 'presentations'}
+            or type(catalog['schemaVersion']) is not int or catalog['schemaVersion'] != 1
+            or catalog['sourceCommit'] != config['commitSha']
+            or catalog['flutterVersion'] != config['frozenInputs']['flutterVersion']
+            or not re.fullmatch(r'sha256:[0-9a-f]{64}', catalog['lockfileDigest'])):
+        raise ValueError('native catalog source mismatch')
+    body = json.dumps(catalog, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+    if assembly['catalogDigest'] != 'sha256:' + hashlib.sha256(body).hexdigest():
+        raise ValueError('native catalog digest mismatch')
+    selections = assembly['selections']
+    if not isinstance(selections, list) or not 1 <= len(selections) <= 256:
+        raise ValueError('invalid native selections')
+    features = set()
+    for item in selections:
+        if (set(item) != {'feature', 'presentation'} or item['feature'] in features
+                or any(not re.fullmatch(r'[A-Z][A-Z0-9_]{0,63}', value) for value in item.values())):
+            raise ValueError('invalid native selection')
+        features.add(item['feature'])
+        implementation = next((p for p in catalog['presentations']
+            if p['feature'] == item['feature'] and p['presentation'] == item['presentation']), None)
+        if implementation is None or config['platform'] not in implementation['platforms']:
+            raise ValueError('unsupported native implementation')
+    if 'HOME' not in features:
+        raise ValueError('native HOME implementation required')
+    if config['dartDefines'].get('SWAN_INTERNAL_BUILD') != 'false':
+        raise ValueError('product build cannot enable internal capabilities')
+
+
 if __name__ == '__main__':
     try:
         with open(sys.argv[1]) as stream:
             print(digest(validate(load(stream.read())['config'])))
     except (ValueError, KeyError, OSError, IndexError, TypeError, AttributeError):
-        raise SystemExit('invalid Build Spec v1 identity')
+        raise SystemExit('invalid Build Spec identity')

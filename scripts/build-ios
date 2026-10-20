@@ -35,60 +35,26 @@ python3 "$script_dir/configure_ios.py" "$state/spec.json" ios/Runner.xcodeproj
 flutter build ios --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "--dart-define-from-file=$state/ios-dart-defines.json"
 # Produce only the unsigned device app; distribution signing is isolated below.
 # Plist mutation is data-only and occurs before isolated signing.
-python3 - "$name" "$state/spec.json" <<'PYNAME'
+python3 - "$name" "$state/spec.json" "$script_dir" <<'PYNAME'
 from pathlib import Path
 import json, plistlib, re, sys
+sys.path.insert(0, sys.argv[3])
+from ios_privacy import project_privacy
 spec=json.loads(Path(sys.argv[2]).read_text())
-profile=spec['config']['appProfile']
-capabilities={item['key'] for item in profile.get('deviceCapabilities', [])}
-locale=profile.get('defaultLocale')
-purposes={item['key']: {p['locale']:p['description'] for p in item.get('purposes', [])} for item in profile.get('deviceCapabilities', [])}
-usage={
- 'camera.capture': ('NSCameraUsageDescription', 'camera'),
- 'microphone.record': ('NSMicrophoneUsageDescription', 'microphone'),
- 'location.foreground': ('NSLocationWhenInUseUsageDescription', 'location'),
- 'location.background': ('NSLocationAlwaysAndWhenInUseUsageDescription', 'background location'),
- 'photos.read': ('NSPhotoLibraryUsageDescription', 'photo library'),
- 'photos.write': ('NSPhotoLibraryAddUsageDescription', 'photo library'),
- 'biometrics.authenticate': ('NSFaceIDUsageDescription', 'biometric authentication'),
-}
-if not capabilities <= set(usage) | {'notifications.push', 'background.execution'}:
-    raise SystemExit('unsupported iOS native capability')
+config=spec['config']
+profile=config['appProfile']
+metadata=dict(profile, appDisplayName=sys.argv[1], source=config.get('signing', {}).get('source'))
+components={item['applicationIdentifier']: item for item in config.get('signing', {}).get('components', [])}
 for app in Path('build/ios/iphoneos').glob('*.app'):
     for component in [app, *(p for p in app.rglob('*') if p.suffix in {'.app', '.appex'} and p.is_dir())]:
-        info=component / 'Info.plist'
-        body=plistlib.loads(info.read_bytes())
-        body['CFBundleDisplayName']=sys.argv[1]
-        info.write_bytes(plistlib.dumps(body))
-for info in Path('build/ios/iphoneos').glob('*.app/Info.plist'):
-    body=plistlib.loads(info.read_bytes())
-    for capability, (key, purpose) in usage.items():
-        if capability in capabilities:
-            description=purposes.get(capability, {}).get(locale)
-            if spec['config'].get('signing', {}).get('source') == 'tenant' and not description:
-                raise SystemExit('missing frozen usage description')
-            body[key] = description or sys.argv[1] + ' uses ' + purpose + ' for enabled app features.'
-    if 'location.background' in capabilities:
-        body['NSLocationWhenInUseUsageDescription'] = purposes.get('location.foreground', {}).get(locale) or purposes.get('location.background', {}).get(locale) or sys.argv[1] + ' uses location for enabled app features.'
-    modes=[]
-    if 'location.background' in capabilities: modes.append('location')
-    if 'notifications.push' in capabilities: modes.append('remote-notification')
-    if 'background.execution' in capabilities: modes.append('fetch')
-    body['UIBackgroundModes']=modes
-    info.write_bytes(plistlib.dumps(body))
-    for localization in profile.get('localizations', []):
-        language=localization['locale']
-        if not re.fullmatch(r'[A-Za-z0-9-]+', language):
-            raise SystemExit('invalid native localization')
-        strings={'CFBundleDisplayName': localization['displayName']}
-        for capability, (key, _) in usage.items():
-            if capability in capabilities and purposes.get(capability, {}).get(language):
-                strings[key]=purposes[capability][language]
-        if 'location.background' in capabilities and purposes.get('location.background', {}).get(language):
-            strings.setdefault('NSLocationWhenInUseUsageDescription', purposes['location.background'][language])
-        directory=info.parent / (language + '.lproj')
-        directory.mkdir(exist_ok=True)
-        (directory / 'InfoPlist.strings').write_bytes(plistlib.dumps(strings))
+        selected=metadata
+        if component != app:
+            identifier=plistlib.loads((component / 'Info.plist').read_bytes())['CFBundleIdentifier']
+            if identifier not in components:
+                raise SystemExit('unconfigured nested component')
+            selected=dict(metadata, **components[identifier])
+            selected['deviceCapabilities']=components[identifier].get('deviceCapabilities', [])
+        project_privacy(component, selected)
 PYNAME
 mkdir -p "$state/unsigned"
 python3 - "$state/unsigned/swan-release.ipa" <<'PY'

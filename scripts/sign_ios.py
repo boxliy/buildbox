@@ -13,6 +13,8 @@ import tempfile
 import zipfile
 
 from sign_android import checked_zip, request, run
+from bluetooth_usage import BLUETOOTH_KEYS
+from ios_privacy import validate_privacy
 
 
 def distribution_method(profile):
@@ -55,7 +57,7 @@ def validate_profile(profile, metadata, certificate):
     supported = {'camera.capture', 'microphone.record', 'location.foreground',
                  'location.background', 'notifications.push', 'photos.read',
                  'photos.write', 'biometrics.authenticate', 'background.execution'}
-    if not capabilities <= supported:
+    if not capabilities <= supported | set(BLUETOOTH_KEYS):
         raise ValueError('unsupported iOS native capability')
     if 'notifications.push' in capabilities:
         requested['aps-environment'] = 'development' if method == 'development' else 'production'
@@ -72,15 +74,7 @@ def validate_app(app, metadata):
         raise ValueError('iOS identity or version mismatch')
     if metadata.get('appDisplayName') and info.get('CFBundleDisplayName') != metadata['appDisplayName']:
         raise ValueError('iOS display name mismatch')
-    usage = {'camera.capture': 'NSCameraUsageDescription', 'microphone.record': 'NSMicrophoneUsageDescription',
-             'location.foreground': 'NSLocationWhenInUseUsageDescription', 'location.background': 'NSLocationAlwaysAndWhenInUseUsageDescription',
-             'photos.read': 'NSPhotoLibraryUsageDescription', 'photos.write': 'NSPhotoLibraryAddUsageDescription',
-             'biometrics.authenticate': 'NSFaceIDUsageDescription'}
-    for capability in metadata.get('deviceCapabilities', []):
-        if metadata.get('source') == 'tenant' and capability['key'] in usage:
-            description = next((p['description'] for p in capability.get('purposes', []) if p['locale'] == metadata.get('defaultLocale')), None)
-            if not description or info.get(usage[capability['key']]) != description:
-                raise ValueError('iOS usage description mismatch')
+    validate_privacy(app, metadata, info)
     executable = info.get('CFBundleExecutable', '')
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', executable) or not (app / executable).is_file():
         raise ValueError('invalid iOS executable')

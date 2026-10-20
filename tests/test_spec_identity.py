@@ -19,7 +19,7 @@ class SpecIdentityTests(unittest.TestCase):
         for source in ['{"x":1,"x":2}', '{"x":9007199254740992}', '{"x":1.0}', '{"x":NaN}']:
             with self.assertRaises(ValueError):
                 spec_identity.load(source)
-        for version in [None, 0, 2, True, '1']:
+        for version in [None, 0, 3, True, '1']:
             with self.assertRaises(ValueError):
                 spec_identity.digest({'schemaVersion': version})
 
@@ -72,5 +72,38 @@ class SpecSemanticTests(unittest.TestCase):
         for key, changed in [('unexpected', True), ('buildNumber', 0), ('buildNumber', 2100000001), ('commitSha', 'main')]:
             invalid = copy.deepcopy(value)
             invalid['frozenInputs'][key] = changed
+            with self.assertRaises(ValueError):
+                spec_identity.validate(invalid)
+
+class NativeSpecTests(unittest.TestCase):
+    def test_fixed_native_hash_vector_is_shared_with_hawk(self):
+        value = json.loads((Path(__file__).parent / 'fixtures/build_spec_v2_identity.json').read_text())
+        self.assertEqual(spec_identity.digest(value['input']), value['sha256'])
+        value['input']['artifactPrefix'] = 'different-attempt/'
+        self.assertEqual(spec_identity.digest(value['input']), value['sha256'])
+        value['input']['assembly']['revision'] += 1
+        self.assertNotEqual(spec_identity.digest(value['input']), value['sha256'])
+
+    def test_native_selection_source_platform_and_catalog_tampering_fail(self):
+        import copy
+        value = json.loads((Path(__file__).parent / 'fixtures/build-spec-apk.json').read_text())['config']
+        native = json.loads((Path(__file__).parent / 'fixtures/build_spec_v2_identity.json').read_text())['input']
+        value.pop('releaseId')
+        value['schemaVersion'] = 2
+        value['platform'] = 'android'
+        value['commitSha'] = native['commitSha']
+        value['frozenInputs']['commitSha'] = native['commitSha']
+        value['frozenInputs']['builtinResources'] = []
+        value['frozenInputs']['languages'] = []
+        value['assembly'] = native['assembly']
+        value['dartDefines']['SWAN_INTERNAL_BUILD'] = 'false'
+        spec_identity.validate(value)
+        for change in (lambda s: s.update(releaseId='1'),
+                       lambda s: s['assembly'].update(catalogDigest='sha256:' + '0' * 64),
+                       lambda s: s['assembly']['catalog'].update(sourceCommit='b' * 40),
+                       lambda s: s['assembly']['selections'][0].update(presentation='UNKNOWN'),
+                       lambda s: s['dartDefines'].update(SWAN_INTERNAL_BUILD='true')):
+            invalid = copy.deepcopy(value)
+            change(invalid)
             with self.assertRaises(ValueError):
                 spec_identity.validate(invalid)

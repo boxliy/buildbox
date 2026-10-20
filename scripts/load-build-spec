@@ -70,6 +70,11 @@ curl --fail --silent --show-error \
   --output "$SPEC_RESPONSE" \
   "$SPEC_URL"
 
+RESPONSE_SPEC_ID=$(json_get_required '.id' id)
+[[ "$RESPONSE_SPEC_ID" =~ ^[1-9][0-9]*$ ]] || die 'invalid build spec id'
+[[ -z "$BUILD_SPEC_ID" || "$BUILD_SPEC_ID" == "$RESPONSE_SPEC_ID" ]] || die 'build spec response does not match requested spec'
+BUILD_SPEC_ID=$RESPONSE_SPEC_ID
+
 REPOSITORY=$(json_get_required '.sourceRepo // .config.sourceRepo' sourceRepo)
 COMMIT_SHA=$(json_get_required '.commitSha // .config.commitSha' commitSha)
 RUN_ID=$(json_get_required '.runId' runId)
@@ -85,7 +90,7 @@ else
   [[ "$ANDROID_APPLICATION_ID" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || die 'androidApplicationId is invalid'
 fi
 
-ACTUAL_SPEC_HASH=$(python3 "$SCRIPT_DIR/spec_identity.py" "$SPEC_RESPONSE") || die 'invalid Build Spec v1 identity'
+ACTUAL_SPEC_HASH=$(python3 "$SCRIPT_DIR/spec_identity.py" "$SPEC_RESPONSE") || die 'invalid Build Spec identity'
 [[ "$SPEC_HASH" == "$ACTUAL_SPEC_HASH" ]] || die 'specHash does not match config'
 
 TARGETS_RAW=$(jq -cer '.targets // .config.targets' "$SPEC_RESPONSE") || die 'targets must be a JSON array'
