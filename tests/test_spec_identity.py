@@ -108,6 +108,62 @@ class NativeSpecTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 spec_identity.validate(invalid)
 
+    def test_resolved_app_configuration_does_not_require_home(self):
+        import copy
+        import hashlib
+        value = json.loads((Path(__file__).parent / 'fixtures/build-spec-apk.json').read_text())['config']
+        native = json.loads((Path(__file__).parent / 'fixtures/build_spec_v2_identity.json').read_text())['input']
+        value.pop('releaseId')
+        value['schemaVersion'] = 2
+        value['platform'] = 'android'
+        value['commitSha'] = native['commitSha']
+        value['frozenInputs']['commitSha'] = native['commitSha']
+        value['frozenInputs']['builtinResources'] = []
+        value['frozenInputs']['languages'] = []
+        value['assembly'] = copy.deepcopy(native['assembly'])
+        value['dartDefines']['SWAN_INTERNAL_BUILD'] = 'false'
+        presentation = value['assembly']['catalog']['presentations'][0]
+        presentation['feature'] = 'FEEDBACK'
+        value['assembly']['selections'] = [{'feature': 'FEEDBACK', 'presentation': 'PLUME'}]
+        catalog = value['assembly']['catalog']
+        body = json.dumps(catalog, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+        value['assembly']['catalogDigest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+        historical = copy.deepcopy(value)
+        with self.assertRaisesRegex(ValueError, 'native HOME implementation required'):
+            spec_identity.validate(historical)
+        digest = 'sha256:' + 'ab' * 32
+        theme = {
+            'kind': 'builtinDefault', 'featureKey': 'FEEDBACK', 'presentationKey': 'PLUME',
+            'assets': [], 'digest': digest,
+        }
+        value['appConfiguration'] = {
+            'configurationRevision': 2,
+            'commonSnapshotDigest': digest,
+            'explicitEnabledFeatures': ['FEEDBACK'],
+            'dependencyFeatures': [],
+            'resolvedFeatures': ['FEEDBACK'],
+            'bindings': [{'featureKey': 'FEEDBACK', 'presentationKey': 'PLUME', 'themeDigest': digest, 'theme': theme}],
+            'themes': [theme],
+            'shell': {
+                'appBar': [{'featureKey': 'FEEDBACK', 'label': 'Help', 'order': 0, 'visible': True}],
+                'personalCenter': [],
+                'startupFeature': 'FEEDBACK',
+            },
+            'digests': {key: digest for key in ('capability', 'catalog', 'resource', 'source')},
+            'identity': {
+                'tenantId': value['tenantId'], 'appId': value['appId'], 'platform': 'android',
+                'applicationIdentifier': value.get('applicationIdentifier', 'com.example.app'),
+            },
+            'permissions': [],
+            'signing': {
+                'reference': 'signing:1', 'versionId': '1', 'certificateSha256': 'ab',
+                'purpose': 'direct', 'distributionMethod': 'direct',
+            },
+            'targetFacts': {'buildNumber': 1, 'versionName': '1.0.0', 'packagingRevision': 1},
+            'targets': value['targets'],
+        }
+        spec_identity.validate(value)
+
     def test_app_configuration_contract_rejects_secrets_and_disabled_personal_center(self):
         import copy
         legacy = json.loads((Path(__file__).parent / 'fixtures/build-spec-apk.json').read_text())['config']

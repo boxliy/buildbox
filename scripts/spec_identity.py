@@ -293,7 +293,9 @@ def validate_native(config):
             if p['feature'] == item['feature'] and p['presentation'] == item['presentation']), None)
         if implementation is None or config['platform'] not in implementation['platforms']:
             raise ValueError('unsupported native implementation')
-    if 'HOME' not in features:
+    # Historical Specs still compile the HOME shell. A frozen appConfiguration
+    # names startup from its first visible app bar item and does not require HOME.
+    if config.get('appConfiguration') is None and 'HOME' not in features:
         raise ValueError('native HOME implementation required')
     if config['dartDefines'].get('SWAN_INTERNAL_BUILD') != 'false':
         raise ValueError('product build cannot enable internal capabilities')
