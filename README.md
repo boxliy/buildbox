@@ -48,7 +48,9 @@ and Python vectors are `tests/fixtures/build_spec_v{1,2}_identity.json`.
 
 Native v2 freezes a source capability catalog, its canonical digest and one
 Presentation per selected Feature. Prepare validates the catalog/source/platform
-binding. Compile rechecks the transported Spec digest, invokes the code-owned
+binding. Compile rechecks the transported Spec digest and re-exports the catalog
+using the same exact-source generator as registration. It compares the full
+catalog, canonical digest and working lockfile before invoking the code-owned
 `waterfowl/tools/app_assembler/assemble.py` in the exact source checkout, and
 enforces the Flutter version and committed dependency lockfile. The assembler
 rejects unknown implementations and backend-supplied code locations.
@@ -115,9 +117,13 @@ run. A proven Android private-key challenge does not carry those checks.
 ```sh
 bash tests/contract.sh
 python3 -m unittest discover -s tests -p 'test_*.py'
+BUILDBOX_AVIARY_CHECKOUT=/path/to/aviary python3 -m unittest tests.test_source_catalog
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/{build,prepare,sign,finalize}.yml
 ```
 
+The opt-in catalog test uses the supplied Aviary checkout's real exporter without
+modifying it, then rejects a catalog change even with a newly calculated Spec hash.
+Source code runs only on the credential-free compile runner.
 Contract tests use isolated HTTP/tool fixtures. Python tests cover real JAR
 signature verification, archive rejection, iOS policy, canonical hashes and
 cross-job failure/cancellation branches. They do not prove an Android SDK or

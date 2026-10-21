@@ -9,6 +9,7 @@ if [[ "$(jq -r '.config.schemaVersion' "$state/spec.json")" == 2 ]]; then
   actual=$(python3 "${BASH_SOURCE[0]%/*}/spec_identity.py" "$state/spec.json")
   expected=$(jq -er '.specHash' "$state/spec.json")
   [[ "$actual" == "$expected" ]] || { echo 'Prepared Spec digest mismatch' >&2; exit 1; }
+  python3 "${BASH_SOURCE[0]%/*}/verify-source-catalog" "$state/spec.json" "$source_root"
   jq -e '.config' "$state/spec.json" >"$state/native-config.json"
   python3 "$source_root/waterfowl/tools/app_assembler/assemble.py" --spec "$state/native-config.json" --checkout "$source_root"
 else
