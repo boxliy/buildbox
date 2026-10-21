@@ -154,6 +154,29 @@ class NativeSpecTests(unittest.TestCase):
             'targets': value['targets'],
         }
         spec_identity.validate(value)
+        for presentation in ('A', 'HOME_2', 'A' * 80):
+            with self.subTest(presentation=presentation):
+                valid = copy.deepcopy(value)
+                valid['appConfiguration']['bindings'][0]['presentationKey'] = presentation
+                valid['appConfiguration']['themes'][0]['presentationKey'] = presentation
+                spec_identity.validate(valid)
+        missing = copy.deepcopy(value)
+        del missing['appConfiguration']['bindings'][0]['presentationKey']
+        del missing['appConfiguration']['themes'][0]['presentationKey']
+        with self.assertRaisesRegex(ValueError, 'invalid presentation key'):
+            spec_identity.validate(missing)
+        for presentation in ('', ' ', 'plume', '1PLUME', 'PLUME-HOME', 'PLÜME', 'PLUME\n',
+                             'A' * 81, None, 1, True, [], {}):
+            with self.subTest(presentation=presentation):
+                invalid = copy.deepcopy(value)
+                invalid['appConfiguration']['bindings'][0]['presentationKey'] = presentation
+                invalid['appConfiguration']['themes'][0]['presentationKey'] = presentation
+                with self.assertRaisesRegex(ValueError, 'invalid presentation key'):
+                    spec_identity.validate(invalid)
+        different = copy.deepcopy(value)
+        different['appConfiguration']['bindings'][0]['presentationKey'] = 'OTHER'
+        with self.assertRaisesRegex(ValueError, 'theme digest does not match its binding'):
+            spec_identity.validate(different)
         leaked = copy.deepcopy(value)
         leaked['appConfiguration']['themes'][0]['password'] = 'nope'
         with self.assertRaisesRegex(ValueError, 'secret entered the build spec'):

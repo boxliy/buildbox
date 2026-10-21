@@ -170,6 +170,9 @@ def validate_app_configuration(config):
     themes = _feature_records(block['themes'], resolved, 'theme')
     for key in resolved:
         binding, theme = bindings[key], themes[key]
+        presentation = binding.get('presentationKey')
+        if not isinstance(presentation, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', presentation):
+            raise ValueError('invalid presentation key')
         if (binding.get('presentationKey') != theme.get('presentationKey')
                 or binding.get('themeDigest') != theme.get('digest')
                 or binding.get('theme') != theme
