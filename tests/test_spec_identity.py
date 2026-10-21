@@ -107,3 +107,60 @@ class NativeSpecTests(unittest.TestCase):
             change(invalid)
             with self.assertRaises(ValueError):
                 spec_identity.validate(invalid)
+
+    def test_app_configuration_contract_rejects_secrets_and_disabled_personal_center(self):
+        import copy
+        legacy = json.loads((Path(__file__).parent / 'fixtures/build-spec-apk.json').read_text())['config']
+        native = json.loads((Path(__file__).parent / 'fixtures/build_spec_v2_identity.json').read_text())['input']
+        value = copy.deepcopy(legacy)
+        value.pop('releaseId')
+        value['schemaVersion'] = 2
+        value['platform'] = 'android'
+        value['commitSha'] = native['commitSha']
+        value['frozenInputs']['commitSha'] = native['commitSha']
+        value['frozenInputs']['builtinResources'] = []
+        value['frozenInputs']['languages'] = []
+        value['assembly'] = native['assembly']
+        value['dartDefines']['SWAN_INTERNAL_BUILD'] = 'false'
+        digest = 'sha256:' + 'ab' * 32
+        theme = {
+            'kind': 'builtinDefault', 'featureKey': 'HOME', 'presentationKey': 'PLUME',
+            'assets': [], 'digest': digest,
+        }
+        value['appConfiguration'] = {
+            'configurationRevision': 2,
+            'commonSnapshotDigest': digest,
+            'explicitEnabledFeatures': ['HOME'],
+            'dependencyFeatures': [],
+            'resolvedFeatures': ['HOME'],
+            'bindings': [{'featureKey': 'HOME', 'presentationKey': 'PLUME', 'themeDigest': digest, 'theme': theme}],
+            'themes': [theme],
+            'shell': {
+                'appBar': [{'featureKey': 'HOME', 'label': 'Home', 'order': 0, 'visible': True}],
+                'personalCenter': [],
+                'startupFeature': 'HOME',
+            },
+            'digests': {key: digest for key in ('capability', 'catalog', 'resource', 'source')},
+            'identity': {
+                'tenantId': value['tenantId'], 'appId': value['appId'], 'platform': 'android',
+                'applicationIdentifier': 'com.example.app',
+            },
+            'permissions': [],
+            'signing': {
+                'reference': 'signing:1', 'versionId': '1', 'certificateSha256': 'ab',
+                'purpose': 'direct', 'distributionMethod': 'direct',
+            },
+            'targetFacts': {'buildNumber': 1, 'versionName': '1.0.0', 'packagingRevision': 1},
+            'targets': value['targets'],
+        }
+        spec_identity.validate(value)
+        leaked = copy.deepcopy(value)
+        leaked['appConfiguration']['themes'][0]['password'] = 'nope'
+        with self.assertRaisesRegex(ValueError, 'secret entered the build spec'):
+            spec_identity.validate(leaked)
+        personal = copy.deepcopy(value)
+        personal['appConfiguration']['shell']['personalCenter'] = [
+            {'featureKey': 'HOME', 'label': 'Unused', 'order': 0, 'visible': True}
+        ]
+        with self.assertRaisesRegex(ValueError, 'personal center was frozen while disabled'):
+            spec_identity.validate(personal)

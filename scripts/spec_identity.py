@@ -49,6 +49,7 @@ def validate(config):
     if config.get('schemaVersion') == 2:
         allowed -= {'releaseId', 'releaseRevision', 'releaseChannel', 'bundledReleaseCanonicalJson', 'swanConfig'}
         allowed.add('assembly')
+        allowed.add('appConfiguration')
         validate_native(config)
     elif config.get('schemaVersion') != 1 or type(config.get('schemaVersion')) is not int:
         raise ValueError('unsupported Build Spec version')
@@ -143,7 +144,70 @@ def validate(config):
     return config
 
 
+def validate_app_configuration(config):
+    """Frozen appConfiguration is optional for older Specs and strict when present."""
+    block = config.get('appConfiguration')
+    if block is None:
+        return
+    allowed = {
+        'bindings', 'commonSnapshotDigest', 'configurationRevision', 'dependencyFeatures', 'digests',
+        'explicitEnabledFeatures', 'identity', 'permissions', 'resolvedFeatures', 'shell', 'signing',
+        'targetFacts', 'targets', 'themes',
+    }
+    if not isinstance(block, dict) or set(block) != allowed:
+        raise ValueError('unknown app configuration field')
+    if _forbidden(block):
+        raise ValueError('secret entered the build spec')
+    if type(block['configurationRevision']) is not int or block['configurationRevision'] < 1:
+        raise ValueError('invalid configuration revision')
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', block['commonSnapshotDigest']):
+        raise ValueError('invalid common snapshot digest')
+    explicit, dependency, resolved = (_features(block[name]) for name in (
+        'explicitEnabledFeatures', 'dependencyFeatures', 'resolvedFeatures'))
+    if set(explicit) & set(dependency) or set(explicit) | set(dependency) != set(resolved):
+        raise ValueError('resolved features must equal the explicit and dependency closure')
+    if len(block['bindings']) != len(resolved) or len(block['themes']) != len(resolved):
+        raise ValueError('each resolved feature needs one binding and one theme')
+    shell = block['shell']
+    if set(shell) != {'appBar', 'personalCenter', 'startupFeature'}:
+        raise ValueError('unknown shell field')
+    if 'PERSONAL_CENTER' not in resolved and shell['personalCenter']:
+        raise ValueError('personal center was frozen while disabled')
+    visible = [item for item in shell['appBar'] if item.get('visible') is True]
+    if not visible or visible[0].get('featureKey') != shell['startupFeature']:
+        raise ValueError('startup feature must be the first visible app bar entry')
+    digests = block['digests']
+    if set(digests) != {'capability', 'catalog', 'resource', 'source'} or any(
+            not re.fullmatch(r'sha256:[0-9a-f]{64}', digests[key]) for key in digests):
+        raise ValueError('invalid configuration digest')
+    identity = block['identity']
+    if identity.get('platform') != config.get('platform'):
+        raise ValueError('app configuration platform mismatch')
+    if block.get('targets') != config.get('targets'):
+        raise ValueError('app configuration target mismatch')
+
+
+def _features(values):
+    if not isinstance(values, list) or any(not re.fullmatch(r'[A-Z][A-Z0-9_]{0,63}', item) for item in values):
+        raise ValueError('invalid feature')
+    if len(values) != len(set(values)):
+        raise ValueError('invalid feature')
+    return values
+
+
+def _forbidden(value):
+    banned = {'authorization', 'ciphertext', 'credential', 'keystore', 'password', 'payloadciphertext',
+              'privatekey', 'secret', 'token', 'wrappeddek'}
+    if isinstance(value, list):
+        return any(_forbidden(item) for item in value)
+    if isinstance(value, dict):
+        return any(''.join(char for char in key.lower() if char.isalnum()) in banned or _forbidden(child)
+                   for key, child in value.items())
+    return False
+
+
 def validate_native(config):
+    validate_app_configuration(config)
     assembly = config['assembly']
     if set(assembly) != {'revision', 'catalogDigest', 'catalog', 'selections'}:
         raise ValueError('unknown native assembly field')
