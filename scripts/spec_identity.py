@@ -49,6 +49,7 @@ def validate(config):
     if config.get('schemaVersion') == 2:
         allowed -= {'releaseId', 'releaseRevision', 'releaseChannel', 'bundledReleaseCanonicalJson', 'swanConfig'}
         allowed.add('assembly')
+        allowed.add('appConfiguration')
         validate_native(config)
     elif config.get('schemaVersion') != 1 or type(config.get('schemaVersion')) is not int:
         raise ValueError('unsupported Build Spec version')
@@ -143,7 +144,127 @@ def validate(config):
     return config
 
 
+def validate_app_configuration(config):
+    """Frozen appConfiguration is optional for older Specs and strict when present."""
+    block = config.get('appConfiguration')
+    if block is None:
+        return
+    allowed = {
+        'bindings', 'commonSnapshotDigest', 'configurationRevision', 'dependencyFeatures', 'digests',
+        'explicitEnabledFeatures', 'identity', 'permissions', 'resolvedFeatures', 'shell', 'signing',
+        'targetFacts', 'targets', 'themes',
+    }
+    if not isinstance(block, dict) or set(block) != allowed:
+        raise ValueError('unknown app configuration field')
+    if _forbidden(block):
+        raise ValueError('secret entered the build spec')
+    if type(block['configurationRevision']) is not int or block['configurationRevision'] < 1:
+        raise ValueError('invalid configuration revision')
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', block['commonSnapshotDigest']):
+        raise ValueError('invalid common snapshot digest')
+    explicit, dependency, resolved = (_features(block[name]) for name in (
+        'explicitEnabledFeatures', 'dependencyFeatures', 'resolvedFeatures'))
+    if set(explicit) & set(dependency) or set(explicit) | set(dependency) != set(resolved):
+        raise ValueError('resolved features must equal the explicit and dependency closure')
+    bindings = _feature_records(block['bindings'], resolved, 'binding')
+    themes = _feature_records(block['themes'], resolved, 'theme')
+    for key in resolved:
+        binding, theme = bindings[key], themes[key]
+        presentation = binding.get('presentationKey')
+        if not isinstance(presentation, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', presentation):
+            raise ValueError('invalid presentation key')
+        if (binding.get('presentationKey') != theme.get('presentationKey')
+                or binding.get('themeDigest') != theme.get('digest')
+                or binding.get('theme') != theme
+                or not re.fullmatch(r'sha256:[0-9a-f]{64}', str(theme.get('digest') or ''))):
+            raise ValueError('theme digest does not match its binding')
+        if theme.get('kind') != 'builtinDefault' and not isinstance(theme.get('tokens'), dict):
+            raise ValueError('managed theme is missing tokens')
+        if not isinstance(theme.get('assets'), list):
+            raise ValueError('theme assets must be a list')
+    shell = block['shell']
+    if not isinstance(shell, dict) or set(shell) != {'appBar', 'personalCenter', 'startupFeature'}:
+        raise ValueError('unknown shell field')
+    app_bar = _shell_items(shell['appBar'], resolved)
+    personal = _shell_items(shell['personalCenter'], resolved)
+    if 'PERSONAL_CENTER' not in resolved and personal:
+        raise ValueError('personal center was frozen while disabled')
+    visible = [item for item in sorted(app_bar, key=lambda item: item['order']) if item['visible']]
+    if not visible or shell.get('startupFeature') not in resolved or visible[0]['featureKey'] != shell['startupFeature']:
+        raise ValueError('startup feature must be the first visible app bar entry')
+    digests = block['digests']
+    if set(digests) != {'capability', 'catalog', 'resource', 'source'} or any(
+            not re.fullmatch(r'sha256:[0-9a-f]{64}', digests[key]) for key in digests):
+        raise ValueError('invalid configuration digest')
+    identity = block['identity']
+    if identity.get('platform') != config.get('platform'):
+        raise ValueError('app configuration platform mismatch')
+    if block.get('targets') != config.get('targets'):
+        raise ValueError('app configuration target mismatch')
+
+
+def _feature_records(items, resolved, label):
+    if not isinstance(items, list):
+        raise ValueError(f'invalid {label}')
+    records = {}
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError(f'invalid {label}')
+        key = item.get('featureKey')
+        if not isinstance(key, str) or key in records:
+            raise ValueError(f'invalid {label}')
+        records[key] = item
+    if set(records) != set(resolved):
+        raise ValueError(f'each resolved feature needs one {label}')
+    return records
+
+
+def _shell_items(items, resolved):
+    if not isinstance(items, list):
+        raise ValueError('shell item must be an object')
+    seen = set()
+    orders = set()
+    parsed = []
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {'featureKey', 'label', 'order', 'visible'}:
+            raise ValueError('unknown shell item field')
+        feature = item['featureKey']
+        if not isinstance(feature, str) or feature not in resolved or feature in seen:
+            raise ValueError('shell feature is invalid')
+        seen.add(feature)
+        order = item['order']
+        if type(order) is not int or order < 0 or order in orders:
+            raise ValueError('shell order is invalid')
+        orders.add(order)
+        if not isinstance(item['label'], str) or not item['label'].strip():
+            raise ValueError('shell label is required')
+        if type(item['visible']) is not bool:
+            raise ValueError('shell visibility is invalid')
+        parsed.append(item)
+    return parsed
+
+
+def _features(values):
+    if not isinstance(values, list) or any(not re.fullmatch(r'[A-Z][A-Z0-9_]{0,63}', item) for item in values):
+        raise ValueError('invalid feature')
+    if len(values) != len(set(values)):
+        raise ValueError('invalid feature')
+    return values
+
+
+def _forbidden(value):
+    banned = {'authorization', 'ciphertext', 'credential', 'keystore', 'password', 'payloadciphertext',
+              'privatekey', 'secret', 'token', 'wrappeddek'}
+    if isinstance(value, list):
+        return any(_forbidden(item) for item in value)
+    if isinstance(value, dict):
+        return any(''.join(char for char in key.lower() if char.isalnum()) in banned or _forbidden(child)
+                   for key, child in value.items())
+    return False
+
+
 def validate_native(config):
+    validate_app_configuration(config)
     assembly = config['assembly']
     if set(assembly) != {'revision', 'catalogDigest', 'catalog', 'selections'}:
         raise ValueError('unknown native assembly field')
