@@ -46,15 +46,16 @@ class SourceCatalogTests(unittest.TestCase):
         self.config['assembly']['catalogDigest'] = digest(self.config['assembly']['catalog'])
         self.spec.write_text(json.dumps({'config': self.config, 'specHash': spec_identity.digest(self.config)}))
 
-    def export(self, args, **kwargs):
-        self.assertEqual(args[1], str(self.checkout / 'waterfowl/tools/app_assembler/generate_catalog.py'))
-        self.assertEqual(args[2:5], ['--source-commit', self.config['commitSha'], '--output'])
-        Path(args[5]).write_text(json.dumps(self.exported))
+    def export(self, checkout, commit):
+        self.assertEqual(checkout, self.checkout)
+        self.assertEqual(commit, self.config['commitSha'])
+        return self.exported
 
     def check(self):
         with patch('subprocess.check_output', return_value=self.config['commitSha'] + '\n'), \
-                patch('subprocess.run', side_effect=self.export):
+                patch('runpy.run_path', return_value={'export_catalog': self.export}) as loader:
             verify(self.spec, self.checkout)
+            loader.assert_called_once_with(str(self.checkout / 'waterfowl/tools/app_assembler/generate_catalog.py'))
 
     def test_frozen_catalog_is_reexported_before_assembly(self):
         self.check()
@@ -66,7 +67,7 @@ class SourceCatalogTests(unittest.TestCase):
             self.check()
 
     def test_wrong_checkout_fails_before_source_execution(self):
-        with patch('subprocess.check_output', return_value='b' * 40), patch('subprocess.run') as exporter:
+        with patch('subprocess.check_output', return_value='b' * 40), patch('runpy.run_path') as exporter:
             with self.assertRaisesRegex(ValueError, 'not the frozen source commit'):
                 verify(self.spec, self.checkout)
             exporter.assert_not_called()
@@ -80,15 +81,33 @@ class SourceCatalogTests(unittest.TestCase):
         value = json.loads(self.spec.read_text())
         value['specHash'] = 'sha256:' + '0' * 64
         self.spec.write_text(json.dumps(value))
-        with patch('subprocess.run') as exporter:
+        with patch('runpy.run_path') as exporter:
             with self.assertRaisesRegex(ValueError, 'Prepared Spec digest'):
                 verify(self.spec, self.checkout)
             exporter.assert_not_called()
 
     @unittest.skipUnless(os.environ.get('BUILDBOX_AVIARY_CHECKOUT'), 'Set BUILDBOX_AVIARY_CHECKOUT for exact-source integration')
     def test_real_aviary_export_and_changed_catalog(self):
-        checkout = Path(os.environ['BUILDBOX_AVIARY_CHECKOUT']).resolve()
-        commit = subprocess.check_output(['git', '-C', str(checkout), 'rev-parse', 'HEAD'], text=True).strip()
+        source = Path(os.environ['BUILDBOX_AVIARY_CHECKOUT']).resolve()
+        commit = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
+        prepare = self.checkout / 'prepare'
+        prepare.mkdir()
+        original = prepare / 'aviary-source'
+        # actions/checkout creates a self-contained repository, not a linked
+        # worktree gitfile. Reproduce its shallow exact-commit checkout locally.
+        subprocess.run(['git', 'init', '-q', str(original)], check=True)
+        subprocess.run(['git', '-C', str(original), 'fetch', '-q', '--depth=1',
+                        source.as_uri(), commit], check=True)
+        subprocess.run(['git', '-C', str(original), 'checkout', '-q', '--detach', 'FETCH_HEAD'], check=True)
+        archive = self.checkout / 'source.tar'
+        subprocess.run(['tar', '-cf', str(archive), '-C', str(prepare), 'aviary-source'], check=True)
+        compile_root = self.checkout / 'compile'
+        compile_root.mkdir()
+        subprocess.run(['tar', '-xf', str(archive), '-C', str(compile_root)], check=True)
+        checkout = compile_root / 'aviary-source'
+        # Hide the prepare repository to prove the tar carries its own objects.
+        original.rename(prepare / 'unavailable-source')
+        self.assertTrue((checkout / '.git/objects').is_dir())
         output = self.checkout / 'real-catalog.json'
         subprocess.run([sys.executable, str(checkout / 'waterfowl/tools/app_assembler/generate_catalog.py'),
             '--source-commit', commit, '--output', str(output)], check=True)
@@ -102,4 +121,8 @@ class SourceCatalogTests(unittest.TestCase):
         self.config['assembly']['catalog']['presentations'][0]['messages']['home-title'] = 'Tampered'
         self.write_spec()
         with self.assertRaisesRegex(ValueError, 'Catalog differs'):
+            verify(self.spec, checkout)
+
+        (checkout / '.git').rename(checkout / 'unavailable-git')
+        with self.assertRaises(subprocess.CalledProcessError):
             verify(self.spec, checkout)

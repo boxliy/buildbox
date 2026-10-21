@@ -121,8 +121,13 @@ BUILDBOX_AVIARY_CHECKOUT=/path/to/aviary python3 -m unittest tests.test_source_c
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/{build,prepare,sign,finalize}.yml
 ```
 
-The opt-in catalog test uses the supplied Aviary checkout's real exporter without
-modifying it, then rejects a catalog change even with a newly calculated Spec hash.
+The opt-in catalog test fetches the supplied Aviary commit into a temporary shallow
+checkout, then uses the workflow's tar commands to restore it at a new path. It
+invokes the real exporter with the prepare path unavailable, rejects a catalog
+change even with a newly calculated Spec hash, and fails closed if Git metadata
+is missing. The tar must include the checkout's self-contained `.git` object
+database; a linked-worktree gitfile or a Git-free source archive is insufficient
+for both catalog export and native assembly.
 Source code runs only on the credential-free compile runner.
 Contract tests use isolated HTTP/tool fixtures. Python tests cover real JAR
 signature verification, archive rejection, iOS policy, canonical hashes and

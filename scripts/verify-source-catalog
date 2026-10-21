@@ -2,10 +2,10 @@
 """Re-export the frozen source catalog on the credential-free compile runner."""
 import hashlib
 import json
+import runpy
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 
 import spec_identity
 
@@ -22,12 +22,8 @@ def verify(spec_path, checkout):
     # Source code runs here only after prepare's repository credential is gone.
     # Use the same committed exporter as catalog registration, without invoking
     # the assembler or reading current App configuration.
-    with tempfile.TemporaryDirectory() as directory:
-        output = Path(directory) / 'catalog.json'
-        subprocess.run([sys.executable,
-            str(checkout / 'waterfowl/tools/app_assembler/generate_catalog.py'),
-            '--source-commit', commit, '--output', str(output)], check=True)
-        catalog = spec_identity.load(output.read_text())
+    exporter = runpy.run_path(str(checkout / 'waterfowl/tools/app_assembler/generate_catalog.py'))
+    catalog = exporter['export_catalog'](checkout, commit)
     canonical = json.dumps(catalog, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
     assembly = config['assembly']
     if (catalog != assembly['catalog']
