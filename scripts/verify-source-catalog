@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Re-export the frozen source catalog on the credential-free compile runner."""
+import hashlib
+import json
+import runpy
+from pathlib import Path
+import subprocess
+import sys
+
+import spec_identity
+
+
+def verify(spec_path, checkout):
+    spec = spec_identity.load(spec_path.read_text())
+    config = spec_identity.validate(spec['config'])
+    if config['schemaVersion'] != 2 or spec_identity.digest(config) != spec['specHash']:
+        raise ValueError('Prepared Spec digest mismatch')
+    commit = subprocess.check_output(
+        ['git', '-C', str(checkout), 'rev-parse', 'HEAD'], text=True).strip()
+    if commit != config['commitSha']:
+        raise ValueError('Build checkout is not the frozen source commit')
+    # Source code runs here only after prepare's repository credential is gone.
+    # Use the same committed exporter as catalog registration, without invoking
+    # the assembler or reading current App configuration.
+    exporter = runpy.run_path(str(checkout / 'waterfowl/tools/app_assembler/generate_catalog.py'))
+    catalog = exporter['export_catalog'](checkout, commit)
+    canonical = json.dumps(catalog, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+    assembly = config['assembly']
+    if (catalog != assembly['catalog']
+            or 'sha256:' + hashlib.sha256(canonical).hexdigest() != assembly['catalogDigest']):
+        raise ValueError('Catalog differs from the exact source commit')
+    lockfile = (checkout / 'waterfowl/pubspec.lock').read_bytes()
+    if 'sha256:' + hashlib.sha256(lockfile).hexdigest() != catalog['lockfileDigest']:
+        raise ValueError('Working dependency lockfile differs from frozen source')
+
+
+if __name__ == '__main__':
+    try:
+        verify(Path(sys.argv[1]), Path(sys.argv[2]).resolve())
+    except (ValueError, KeyError, OSError, IndexError, TypeError, subprocess.CalledProcessError) as error:
+        raise SystemExit(f'Source catalog verification failed: {error}')
