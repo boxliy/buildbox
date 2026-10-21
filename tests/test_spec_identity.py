@@ -158,9 +158,33 @@ class NativeSpecTests(unittest.TestCase):
         leaked['appConfiguration']['themes'][0]['password'] = 'nope'
         with self.assertRaisesRegex(ValueError, 'secret entered the build spec'):
             spec_identity.validate(leaked)
+        omitted = copy.deepcopy(value)
+        del omitted['appConfiguration']
+        spec_identity.validate(omitted)
         personal = copy.deepcopy(value)
         personal['appConfiguration']['shell']['personalCenter'] = [
             {'featureKey': 'HOME', 'label': 'Unused', 'order': 0, 'visible': True}
         ]
         with self.assertRaisesRegex(ValueError, 'personal center was frozen while disabled'):
             spec_identity.validate(personal)
+        empty = copy.deepcopy(value)
+        empty['appConfiguration']['bindings'] = [{}]
+        empty['appConfiguration']['themes'] = [{}]
+        with self.assertRaisesRegex(ValueError, 'invalid binding'):
+            spec_identity.validate(empty)
+        unresolved = copy.deepcopy(value)
+        unresolved['appConfiguration']['shell']['appBar'] = [{'featureKey': 'NOT_COMPILED', 'visible': True}]
+        unresolved['appConfiguration']['shell']['startupFeature'] = 'NOT_COMPILED'
+        with self.assertRaisesRegex(ValueError, 'unknown shell item field'):
+            spec_identity.validate(unresolved)
+        outside = copy.deepcopy(value)
+        outside['appConfiguration']['shell']['appBar'] = [
+            {'featureKey': 'NOT_COMPILED', 'label': 'Missing', 'order': 0, 'visible': True}
+        ]
+        outside['appConfiguration']['shell']['startupFeature'] = 'NOT_COMPILED'
+        with self.assertRaisesRegex(ValueError, 'shell feature is invalid'):
+            spec_identity.validate(outside)
+        mismatch = copy.deepcopy(value)
+        mismatch['appConfiguration']['bindings'][0]['themeDigest'] = 'sha256:' + 'cd' * 32
+        with self.assertRaisesRegex(ValueError, 'theme digest does not match its binding'):
+            spec_identity.validate(mismatch)

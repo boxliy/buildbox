@@ -166,15 +166,28 @@ def validate_app_configuration(config):
         'explicitEnabledFeatures', 'dependencyFeatures', 'resolvedFeatures'))
     if set(explicit) & set(dependency) or set(explicit) | set(dependency) != set(resolved):
         raise ValueError('resolved features must equal the explicit and dependency closure')
-    if len(block['bindings']) != len(resolved) or len(block['themes']) != len(resolved):
-        raise ValueError('each resolved feature needs one binding and one theme')
+    bindings = _feature_records(block['bindings'], resolved, 'binding')
+    themes = _feature_records(block['themes'], resolved, 'theme')
+    for key in resolved:
+        binding, theme = bindings[key], themes[key]
+        if (binding.get('presentationKey') != theme.get('presentationKey')
+                or binding.get('themeDigest') != theme.get('digest')
+                or binding.get('theme') != theme
+                or not re.fullmatch(r'sha256:[0-9a-f]{64}', str(theme.get('digest') or ''))):
+            raise ValueError('theme digest does not match its binding')
+        if theme.get('kind') != 'builtinDefault' and not isinstance(theme.get('tokens'), dict):
+            raise ValueError('managed theme is missing tokens')
+        if not isinstance(theme.get('assets'), list):
+            raise ValueError('theme assets must be a list')
     shell = block['shell']
-    if set(shell) != {'appBar', 'personalCenter', 'startupFeature'}:
+    if not isinstance(shell, dict) or set(shell) != {'appBar', 'personalCenter', 'startupFeature'}:
         raise ValueError('unknown shell field')
-    if 'PERSONAL_CENTER' not in resolved and shell['personalCenter']:
+    app_bar = _shell_items(shell['appBar'], resolved)
+    personal = _shell_items(shell['personalCenter'], resolved)
+    if 'PERSONAL_CENTER' not in resolved and personal:
         raise ValueError('personal center was frozen while disabled')
-    visible = [item for item in shell['appBar'] if item.get('visible') is True]
-    if not visible or visible[0].get('featureKey') != shell['startupFeature']:
+    visible = [item for item in sorted(app_bar, key=lambda item: item['order']) if item['visible']]
+    if not visible or shell.get('startupFeature') not in resolved or visible[0]['featureKey'] != shell['startupFeature']:
         raise ValueError('startup feature must be the first visible app bar entry')
     digests = block['digests']
     if set(digests) != {'capability', 'catalog', 'resource', 'source'} or any(
@@ -185,6 +198,47 @@ def validate_app_configuration(config):
         raise ValueError('app configuration platform mismatch')
     if block.get('targets') != config.get('targets'):
         raise ValueError('app configuration target mismatch')
+
+
+def _feature_records(items, resolved, label):
+    if not isinstance(items, list):
+        raise ValueError(f'invalid {label}')
+    records = {}
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError(f'invalid {label}')
+        key = item.get('featureKey')
+        if not isinstance(key, str) or key in records:
+            raise ValueError(f'invalid {label}')
+        records[key] = item
+    if set(records) != set(resolved):
+        raise ValueError(f'each resolved feature needs one {label}')
+    return records
+
+
+def _shell_items(items, resolved):
+    if not isinstance(items, list):
+        raise ValueError('shell item must be an object')
+    seen = set()
+    orders = set()
+    parsed = []
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {'featureKey', 'label', 'order', 'visible'}:
+            raise ValueError('unknown shell item field')
+        feature = item['featureKey']
+        if not isinstance(feature, str) or feature not in resolved or feature in seen:
+            raise ValueError('shell feature is invalid')
+        seen.add(feature)
+        order = item['order']
+        if type(order) is not int or order < 0 or order in orders:
+            raise ValueError('shell order is invalid')
+        orders.add(order)
+        if not isinstance(item['label'], str) or not item['label'].strip():
+            raise ValueError('shell label is required')
+        if type(item['visible']) is not bool:
+            raise ValueError('shell visibility is invalid')
+        parsed.append(item)
+    return parsed
 
 
 def _features(values):
