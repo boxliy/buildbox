@@ -85,12 +85,14 @@ claim a new attempt. A crash between the commit and POST can therefore produce
 a failed attempt, never a second ambiguous dispatch.
 
 
-## AVIARY-121 integration pins
+## Resolved App configuration integration pins
 
 The example caller pins prepare/sign/finalize to
-`b0b3785645272338bbaddce6812d781044da2185`; those workflows and compile check out
-scripts at `971cba052f961272e9e013bb16f638a10aad5418`. The independent material
+`26c4ba6b8799f739dd53c73709b8b2a5dc0e52ff`; those workflows and compile check out
+scripts at `323cd9499c8f8c6d72cc74e1fbdced5be5f74db9`. The independent material
 validator's existing approval/pin contract is unchanged. These public reusable
 SHAs are not an approved private caller SHA. The private caller's operator must
 record its resulting exact commit in Hawk before authorized product execution.
+These script pins include Build Spec v2 `appConfiguration` validation and Android
+startup without HOME. Older script pins do not execute that resolved contract.
 No real product workflow is dispatched as part of fixture acceptance.
