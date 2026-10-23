@@ -30,7 +30,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/prepare.yml@26c4ba6b8799f739dd53c73709b8b2a5dc0e52ff
+    uses: boxliy/buildbox/.github/workflows/prepare.yml@d50050e8c58aafa9395dd24bbe78481356fc673e
     with:
       build_run_id: ${{ inputs.build_run_id }}
     secrets:
@@ -53,7 +53,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 04abfb52641e45c38860a6e60a5496679831d0af
+          ref: 04abfb57889d7446484b88725fd33708e87bb382
           persist-credentials: false
 
       - name: Restore compile inputs
@@ -113,7 +113,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/sign.yml@26c4ba6b8799f739dd53c73709b8b2a5dc0e52ff
+    uses: boxliy/buildbox/.github/workflows/sign.yml@d50050e8c58aafa9395dd24bbe78481356fc673e
     with:
       build_run_id: ${{ inputs.build_run_id }}
       platform: ${{ needs.prepare.outputs.platform }}
@@ -127,7 +127,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/finalize.yml@26c4ba6b8799f739dd53c73709b8b2a5dc0e52ff
+    uses: boxliy/buildbox/.github/workflows/finalize.yml@d50050e8c58aafa9395dd24bbe78481356fc673e
     with:
       build_run_id: ${{ inputs.build_run_id }}
       prepare_result: ${{ needs.prepare.result }}
