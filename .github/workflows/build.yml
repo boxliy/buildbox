@@ -30,7 +30,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/prepare.yml@04461c8d76518b21d532a22b2125e79f4aeed246
+    uses: boxliy/buildbox/.github/workflows/prepare.yml@0a124e3bc5bff985f2d28c7400ee7567083d88bb
     with:
       build_run_id: ${{ inputs.build_run_id }}
     secrets:
@@ -113,7 +113,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/sign.yml@04461c8d76518b21d532a22b2125e79f4aeed246
+    uses: boxliy/buildbox/.github/workflows/sign.yml@0a124e3bc5bff985f2d28c7400ee7567083d88bb
     with:
       build_run_id: ${{ inputs.build_run_id }}
       platform: ${{ needs.prepare.outputs.platform }}
@@ -127,7 +127,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/finalize.yml@04461c8d76518b21d532a22b2125e79f4aeed246
+    uses: boxliy/buildbox/.github/workflows/finalize.yml@0a124e3bc5bff985f2d28c7400ee7567083d88bb
     with:
       build_run_id: ${{ inputs.build_run_id }}
       prepare_result: ${{ needs.prepare.result }}
