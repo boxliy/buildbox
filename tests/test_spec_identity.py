@@ -279,6 +279,7 @@ class NativeSpecTests(unittest.TestCase):
             'name': 'Built-in default',
             'version': 1,
             'presentationKey': 'PLUME',
+            'assetNamespace': 'plume',
             'assets': [],
             'sourceCommit': current['commitSha'],
         }
@@ -307,6 +308,7 @@ class NativeSpecTests(unittest.TestCase):
             appearance['presentations'][0]['presentationKey'] = key
             appearance['presentations'][0]['themes'][0]['presentationKey'] = key
             theme = appearance['presentations'][0]['themes'][0]
+            theme['assetNamespace'] = key.lower()
             content = {name: field for name, field in theme.items() if name != 'digest'}
             body = json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
             theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()

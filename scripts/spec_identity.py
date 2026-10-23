@@ -261,6 +261,10 @@ def _validate_appearance(appearance, resolved):
             if theme_key in theme_keys:
                 raise ValueError('appearance theme is duplicated')
             theme_keys.add(theme_key)
+            expected_namespace = (key.lower() if theme.get('kind') == 'builtinDefault'
+                                  else f'managed/{key.lower()}/{theme_key}')
+            if theme.get('assetNamespace') != expected_namespace:
+                raise ValueError('appearance theme asset namespace is invalid')
             theme_digest = theme.get('digest')
             if not isinstance(theme_digest, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', theme_digest):
                 raise ValueError('appearance theme digest is invalid')
