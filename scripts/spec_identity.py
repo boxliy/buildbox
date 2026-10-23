@@ -221,6 +221,7 @@ def _validate_appearance(appearance, resolved):
     if not isinstance(presentations, list) or not presentations:
         raise ValueError('appearance presentations must be a non-empty list')
     keys = set()
+    asset_namespaces = set()
     previous = None
     for item in presentations:
         if not isinstance(item, dict) or set(item) != {
@@ -261,9 +262,18 @@ def _validate_appearance(appearance, resolved):
             if theme_key in theme_keys:
                 raise ValueError('appearance theme is duplicated')
             theme_keys.add(theme_key)
-            expected_namespace = (key.lower() if theme.get('kind') == 'builtinDefault'
+            kind = theme.get('kind')
+            expected_namespace = (key.lower() if kind == 'builtinDefault'
                                   else f'managed/{key.lower()}/{theme_key}')
-            if theme.get('assetNamespace') != expected_namespace:
+            namespace = theme.get('assetNamespace')
+            legacy_namespace = kind == 'managed' and namespace == theme_key
+            if ((namespace != expected_namespace and not legacy_namespace)
+                    or namespace in asset_namespaces):
+                raise ValueError('appearance theme asset namespace is invalid')
+            asset_namespaces.add(namespace)
+            marker = f'/assets/themes/{namespace}/'
+            if any(not isinstance(asset, dict) or marker not in str(asset.get('path', ''))
+                   for asset in theme['assets']):
                 raise ValueError('appearance theme asset namespace is invalid')
             theme_digest = theme.get('digest')
             if not isinstance(theme_digest, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', theme_digest):

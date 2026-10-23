@@ -300,6 +300,24 @@ class NativeSpecTests(unittest.TestCase):
             }],
         }
         spec_identity.validate(current)
+        legacy = copy.deepcopy(current)
+        legacy_theme = legacy['appConfiguration']['appearance']['presentations'][0]['themes'][0]
+        legacy_theme['kind'] = 'managed'
+        legacy_theme['key'] = 'blue'
+        legacy_theme['tokens'] = {'accent': '#112233'}
+        legacy_theme['assetNamespace'] = 'blue'
+        legacy_theme['assets'] = [{
+            'path': 'waterfowl/apps/swan/assets/themes/blue/icon.svg',
+            'sha256': 'ab' * 32,
+        }]
+        legacy_theme.pop('digest')
+        body = json.dumps(legacy_theme, ensure_ascii=False, sort_keys=True,
+                          separators=(',', ':')).encode()
+        legacy_theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+        legacy['appConfiguration']['appearance']['presentations'][0][
+            'defaultThemeKey'
+        ] = 'blue'
+        spec_identity.validate(legacy)
         for length in (64, 65, 80):
             boundary = copy.deepcopy(current)
             key = 'P' * length
