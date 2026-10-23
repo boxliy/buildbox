@@ -304,6 +304,7 @@ class NativeSpecTests(unittest.TestCase):
         legacy_theme = legacy['appConfiguration']['appearance']['presentations'][0]['themes'][0]
         legacy_theme['kind'] = 'managed'
         legacy_theme['key'] = 'blue'
+        legacy_theme['styleKey'] = 'PLUME'
         legacy_theme['tokens'] = {'accent': '#112233'}
         legacy_theme['assetNamespace'] = 'blue'
         legacy_theme['assets'] = [{
@@ -318,6 +319,17 @@ class NativeSpecTests(unittest.TestCase):
             'defaultThemeKey'
         ] = 'blue'
         spec_identity.validate(legacy)
+        mismatched_family = copy.deepcopy(legacy)
+        mismatched_theme = mismatched_family['appConfiguration']['appearance'][
+            'presentations'
+        ][0]['themes'][0]
+        mismatched_theme['styleKey'] = 'CLARITY'
+        mismatched_theme.pop('digest')
+        body = json.dumps(mismatched_theme, ensure_ascii=False, sort_keys=True,
+                          separators=(',', ':')).encode()
+        mismatched_theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+        with self.assertRaisesRegex(ValueError, 'appearance theme style family is invalid'):
+            spec_identity.validate(mismatched_family)
         invalid_path = copy.deepcopy(legacy)
         invalid_theme = invalid_path['appConfiguration']['appearance']['presentations'][0][
             'themes'

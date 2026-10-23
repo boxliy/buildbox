@@ -229,8 +229,9 @@ def _validate_appearance(appearance, resolved):
                 'featureKeys', 'defaultThemeKey', 'themes'}:
             raise ValueError('unknown appearance presentation field')
         key = item.get('presentationKey')
+        style_key = item.get('styleKey')
         if (not isinstance(key, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', key)
-                or key in keys or not isinstance(item.get('styleKey'), str) or not item['styleKey']):
+                or key in keys or not isinstance(style_key, str) or not style_key):
             raise ValueError('appearance presentation identity is invalid')
         keys.add(key)
         if (not isinstance(item.get('name'), str) or not item['name'].strip()
@@ -263,6 +264,8 @@ def _validate_appearance(appearance, resolved):
                 raise ValueError('appearance theme is duplicated')
             theme_keys.add(theme_key)
             kind = theme.get('kind')
+            if kind == 'managed' and theme.get('styleKey') != style_key:
+                raise ValueError('appearance theme style family is invalid')
             expected_namespace = (key.lower() if kind == 'builtinDefault'
                                   else f'managed/{key.lower()}/{theme_key}')
             namespace = theme.get('assetNamespace')
