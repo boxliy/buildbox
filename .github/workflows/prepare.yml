@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 04abfb57889d7446484b88725fd33708e87bb382
+          ref: aa4cf13c04248bd71fc1f7f2b086dfdd45d3e35e
           persist-credentials: false
 
       - name: Exchange prepare credential
