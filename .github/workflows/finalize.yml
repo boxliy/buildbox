@@ -43,7 +43,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: aa4cf13c04248bd71fc1f7f2b086dfdd45d3e35e
+          ref: 901ac2dd6957fd5347e2e5e7f7b5336b783a0557
           persist-credentials: false
 
       # Exchange before any artifact restore. A missing artifact must not block the callback.
