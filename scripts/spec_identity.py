@@ -149,12 +149,14 @@ def validate_app_configuration(config):
     block = config.get('appConfiguration')
     if block is None:
         return
-    allowed = {
-        'bindings', 'commonSnapshotDigest', 'configurationRevision', 'dependencyFeatures', 'digests',
+    common = {
+        'commonSnapshotDigest', 'configurationRevision', 'dependencyFeatures', 'digests',
         'explicitEnabledFeatures', 'identity', 'permissions', 'resolvedFeatures', 'shell', 'signing',
-        'targetFacts', 'targets', 'themes',
+        'targetFacts', 'targets',
     }
-    if not isinstance(block, dict) or set(block) != allowed:
+    legacy = common | {'bindings', 'themes'}
+    current = common | {'appearance'}
+    if not isinstance(block, dict) or set(block) not in (legacy, current):
         raise ValueError('unknown app configuration field')
     if _forbidden(block):
         raise ValueError('secret entered the build spec')
@@ -166,22 +168,25 @@ def validate_app_configuration(config):
         'explicitEnabledFeatures', 'dependencyFeatures', 'resolvedFeatures'))
     if set(explicit) & set(dependency) or set(explicit) | set(dependency) != set(resolved):
         raise ValueError('resolved features must equal the explicit and dependency closure')
-    bindings = _feature_records(block['bindings'], resolved, 'binding')
-    themes = _feature_records(block['themes'], resolved, 'theme')
-    for key in resolved:
-        binding, theme = bindings[key], themes[key]
-        presentation = binding.get('presentationKey')
-        if not isinstance(presentation, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', presentation):
-            raise ValueError('invalid presentation key')
-        if (binding.get('presentationKey') != theme.get('presentationKey')
-                or binding.get('themeDigest') != theme.get('digest')
-                or binding.get('theme') != theme
-                or not re.fullmatch(r'sha256:[0-9a-f]{64}', str(theme.get('digest') or ''))):
-            raise ValueError('theme digest does not match its binding')
-        if theme.get('kind') != 'builtinDefault' and not isinstance(theme.get('tokens'), dict):
-            raise ValueError('managed theme is missing tokens')
-        if not isinstance(theme.get('assets'), list):
-            raise ValueError('theme assets must be a list')
+    if 'appearance' in block:
+        _validate_appearance(block['appearance'], resolved)
+    else:
+        bindings = _feature_records(block['bindings'], resolved, 'binding')
+        themes = _feature_records(block['themes'], resolved, 'theme')
+        for key in resolved:
+            binding, theme = bindings[key], themes[key]
+            presentation = binding.get('presentationKey')
+            if not isinstance(presentation, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', presentation):
+                raise ValueError('invalid presentation key')
+            if (binding.get('presentationKey') != theme.get('presentationKey')
+                    or binding.get('themeDigest') != theme.get('digest')
+                    or binding.get('theme') != theme
+                    or not re.fullmatch(r'sha256:[0-9a-f]{64}', str(theme.get('digest') or ''))):
+                raise ValueError('theme digest does not match its binding')
+            if theme.get('kind') != 'builtinDefault' and not isinstance(theme.get('tokens'), dict):
+                raise ValueError('managed theme is missing tokens')
+            if not isinstance(theme.get('assets'), list):
+                raise ValueError('theme assets must be a list')
     shell = block['shell']
     if not isinstance(shell, dict) or set(shell) != {'appBar', 'personalCenter', 'startupFeature'}:
         raise ValueError('unknown shell field')
@@ -201,6 +206,95 @@ def validate_app_configuration(config):
         raise ValueError('app configuration platform mismatch')
     if block.get('targets') != config.get('targets'):
         raise ValueError('app configuration target mismatch')
+
+
+def _validate_appearance(appearance, resolved):
+    if (not isinstance(appearance, dict)
+            or set(appearance) != {'contractVersion', 'defaultPresentationKey', 'presentations'}
+            or type(appearance.get('contractVersion')) is not int
+            or appearance['contractVersion'] != 1):
+        raise ValueError('unknown appearance field')
+    default = appearance.get('defaultPresentationKey')
+    if not isinstance(default, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', default):
+        raise ValueError('appearance default presentation is invalid')
+    presentations = appearance.get('presentations')
+    if not isinstance(presentations, list) or not presentations:
+        raise ValueError('appearance presentations must be a non-empty list')
+    keys = set()
+    asset_namespaces = set()
+    previous = None
+    for item in presentations:
+        if not isinstance(item, dict) or set(item) != {
+                'presentationKey', 'styleKey', 'name', 'order', 'directoryRevision',
+                'featureKeys', 'defaultThemeKey', 'themes'}:
+            raise ValueError('unknown appearance presentation field')
+        key = item.get('presentationKey')
+        style_key = item.get('styleKey')
+        if (not isinstance(key, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', key)
+                or key in keys or not isinstance(style_key, str) or not style_key):
+            raise ValueError('appearance presentation identity is invalid')
+        keys.add(key)
+        if (not isinstance(item.get('name'), str) or not item['name'].strip()
+                or type(item.get('directoryRevision')) is not int or item['directoryRevision'] < 1):
+            raise ValueError('appearance presentation metadata is invalid')
+        order = item.get('order')
+        if type(order) is not int:
+            raise ValueError('appearance presentation order is invalid')
+        current = (order, key)
+        if previous is not None and previous >= current:
+            raise ValueError('appearance presentations are not stably ordered')
+        previous = current
+        if _features(item.get('featureKeys')) != resolved:
+            raise ValueError('appearance feature keys must equal resolved features')
+        default_theme = item.get('defaultThemeKey')
+        if not isinstance(default_theme, str) or not default_theme:
+            raise ValueError('appearance default theme is invalid')
+        themes = item.get('themes')
+        if not isinstance(themes, list) or not themes:
+            raise ValueError('appearance themes must be a non-empty list')
+        theme_keys = set()
+        for theme in themes:
+            if (not isinstance(theme, dict) or 'featureKey' in theme
+                    or theme.get('presentationKey') != key or not isinstance(theme.get('assets'), list)):
+                raise ValueError('appearance theme scope is invalid')
+            theme_key = theme.get('key')
+            if not isinstance(theme_key, str) or not theme_key:
+                raise ValueError('appearance theme key is invalid')
+            if theme_key in theme_keys:
+                raise ValueError('appearance theme is duplicated')
+            theme_keys.add(theme_key)
+            kind = theme.get('kind')
+            if kind == 'managed' and theme.get('styleKey') != style_key:
+                raise ValueError('appearance theme style family is invalid')
+            expected_namespace = (key.lower() if kind == 'builtinDefault'
+                                  else f'managed/{key.lower()}/{theme_key}')
+            namespace = theme.get('assetNamespace')
+            legacy_namespace = kind == 'managed' and namespace == theme_key
+            if ((namespace != expected_namespace and not legacy_namespace)
+                    or namespace in asset_namespaces):
+                raise ValueError('appearance theme asset namespace is invalid')
+            asset_namespaces.add(namespace)
+            marker = f'/assets/themes/{namespace}/'
+            if any(not isinstance(asset, dict)
+                   or not isinstance(asset.get('path'), str)
+                   or marker not in asset['path'] for asset in theme['assets']):
+                raise ValueError('appearance theme asset namespace is invalid')
+            theme_digest = theme.get('digest')
+            if not isinstance(theme_digest, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', theme_digest):
+                raise ValueError('appearance theme digest is invalid')
+            content = {name: value for name, value in theme.items() if name != 'digest'}
+            body = json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+            if theme_digest != 'sha256:' + hashlib.sha256(body).hexdigest():
+                raise ValueError('appearance theme digest mismatch')
+            kind = theme.get('kind')
+            if kind not in ('builtinDefault', 'managed'):
+                raise ValueError('appearance theme kind is invalid')
+            if kind == 'managed' and not isinstance(theme.get('tokens'), dict):
+                raise ValueError('managed theme is missing tokens')
+        if default_theme not in theme_keys:
+            raise ValueError('appearance default theme is unavailable')
+    if default not in keys:
+        raise ValueError('appearance default presentation is unavailable')
 
 
 def _feature_records(items, resolved, label):

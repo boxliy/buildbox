@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -267,3 +268,99 @@ class NativeSpecTests(unittest.TestCase):
         mismatch['appConfiguration']['bindings'][0]['themeDigest'] = 'sha256:' + 'cd' * 32
         with self.assertRaisesRegex(ValueError, 'theme digest does not match its binding'):
             spec_identity.validate(mismatch)
+
+        current = copy.deepcopy(value)
+        block = current['appConfiguration']
+        del block['bindings']
+        del block['themes']
+        theme = {
+            'kind': 'builtinDefault',
+            'key': 'PLUME:builtinDefault',
+            'name': 'Built-in default',
+            'version': 1,
+            'presentationKey': 'PLUME',
+            'assetNamespace': 'plume',
+            'assets': [],
+            'sourceCommit': current['commitSha'],
+        }
+        body = json.dumps(theme, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+        theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+        block['appearance'] = {
+            'contractVersion': 1,
+            'defaultPresentationKey': 'PLUME',
+            'presentations': [{
+                'presentationKey': 'PLUME',
+                'styleKey': 'PLUME',
+                'name': 'Plume',
+                'order': 10,
+                'directoryRevision': 1,
+                'featureKeys': ['HOME'],
+                'defaultThemeKey': 'PLUME:builtinDefault',
+                'themes': [theme],
+            }],
+        }
+        spec_identity.validate(current)
+        legacy = copy.deepcopy(current)
+        legacy_theme = legacy['appConfiguration']['appearance']['presentations'][0]['themes'][0]
+        legacy_theme['kind'] = 'managed'
+        legacy_theme['key'] = 'blue'
+        legacy_theme['styleKey'] = 'PLUME'
+        legacy_theme['tokens'] = {'accent': '#112233'}
+        legacy_theme['assetNamespace'] = 'blue'
+        legacy_theme['assets'] = [{
+            'path': 'waterfowl/apps/swan/assets/themes/blue/icon.svg',
+            'sha256': 'ab' * 32,
+        }]
+        legacy_theme.pop('digest')
+        body = json.dumps(legacy_theme, ensure_ascii=False, sort_keys=True,
+                          separators=(',', ':')).encode()
+        legacy_theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+        legacy['appConfiguration']['appearance']['presentations'][0][
+            'defaultThemeKey'
+        ] = 'blue'
+        spec_identity.validate(legacy)
+        mismatched_family = copy.deepcopy(legacy)
+        mismatched_theme = mismatched_family['appConfiguration']['appearance'][
+            'presentations'
+        ][0]['themes'][0]
+        mismatched_theme['styleKey'] = 'CLARITY'
+        mismatched_theme.pop('digest')
+        body = json.dumps(mismatched_theme, ensure_ascii=False, sort_keys=True,
+                          separators=(',', ':')).encode()
+        mismatched_theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+        with self.assertRaisesRegex(ValueError, 'appearance theme style family is invalid'):
+            spec_identity.validate(mismatched_family)
+        invalid_path = copy.deepcopy(legacy)
+        invalid_theme = invalid_path['appConfiguration']['appearance']['presentations'][0][
+            'themes'
+        ][0]
+        invalid_theme['assets'][0]['path'] = [
+            'waterfowl/apps/swan/assets/themes/blue/icon.svg'
+        ]
+        invalid_theme.pop('digest')
+        body = json.dumps(invalid_theme, ensure_ascii=False, sort_keys=True,
+                          separators=(',', ':')).encode()
+        invalid_theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+        with self.assertRaisesRegex(ValueError, 'appearance theme asset namespace is invalid'):
+            spec_identity.validate(invalid_path)
+        for length in (64, 65, 80):
+            boundary = copy.deepcopy(current)
+            key = 'P' * length
+            appearance = boundary['appConfiguration']['appearance']
+            appearance['defaultPresentationKey'] = key
+            appearance['presentations'][0]['presentationKey'] = key
+            appearance['presentations'][0]['themes'][0]['presentationKey'] = key
+            theme = appearance['presentations'][0]['themes'][0]
+            theme['assetNamespace'] = key.lower()
+            content = {name: field for name, field in theme.items() if name != 'digest'}
+            body = json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+            theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+            spec_identity.validate(boundary)
+        too_long = copy.deepcopy(current)
+        too_long['appConfiguration']['appearance']['defaultPresentationKey'] = 'P' * 81
+        with self.assertRaisesRegex(ValueError, 'appearance default presentation is invalid'):
+            spec_identity.validate(too_long)
+        invalid = copy.deepcopy(current)
+        invalid['appConfiguration']['appearance']['presentations'][0]['themes'][0]['name'] = 'Changed'
+        with self.assertRaisesRegex(ValueError, 'appearance theme digest mismatch'):
+            spec_identity.validate(invalid)
