@@ -299,6 +299,22 @@ class NativeSpecTests(unittest.TestCase):
             }],
         }
         spec_identity.validate(current)
+        for length in (64, 65, 80):
+            boundary = copy.deepcopy(current)
+            key = 'P' * length
+            appearance = boundary['appConfiguration']['appearance']
+            appearance['defaultPresentationKey'] = key
+            appearance['presentations'][0]['presentationKey'] = key
+            appearance['presentations'][0]['themes'][0]['presentationKey'] = key
+            theme = appearance['presentations'][0]['themes'][0]
+            content = {name: field for name, field in theme.items() if name != 'digest'}
+            body = json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+            theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+            spec_identity.validate(boundary)
+        too_long = copy.deepcopy(current)
+        too_long['appConfiguration']['appearance']['defaultPresentationKey'] = 'P' * 81
+        with self.assertRaisesRegex(ValueError, 'appearance default presentation is invalid'):
+            spec_identity.validate(too_long)
         invalid = copy.deepcopy(current)
         invalid['appConfiguration']['appearance']['presentations'][0]['themes'][0]['name'] = 'Changed'
         with self.assertRaisesRegex(ValueError, 'appearance theme digest mismatch'):
