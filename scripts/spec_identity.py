@@ -272,8 +272,9 @@ def _validate_appearance(appearance, resolved):
                 raise ValueError('appearance theme asset namespace is invalid')
             asset_namespaces.add(namespace)
             marker = f'/assets/themes/{namespace}/'
-            if any(not isinstance(asset, dict) or marker not in str(asset.get('path', ''))
-                   for asset in theme['assets']):
+            if any(not isinstance(asset, dict)
+                   or not isinstance(asset.get('path'), str)
+                   or marker not in asset['path'] for asset in theme['assets']):
                 raise ValueError('appearance theme asset namespace is invalid')
             theme_digest = theme.get('digest')
             if not isinstance(theme_digest, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', theme_digest):

@@ -318,6 +318,19 @@ class NativeSpecTests(unittest.TestCase):
             'defaultThemeKey'
         ] = 'blue'
         spec_identity.validate(legacy)
+        invalid_path = copy.deepcopy(legacy)
+        invalid_theme = invalid_path['appConfiguration']['appearance']['presentations'][0][
+            'themes'
+        ][0]
+        invalid_theme['assets'][0]['path'] = [
+            'waterfowl/apps/swan/assets/themes/blue/icon.svg'
+        ]
+        invalid_theme.pop('digest')
+        body = json.dumps(invalid_theme, ensure_ascii=False, sort_keys=True,
+                          separators=(',', ':')).encode()
+        invalid_theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+        with self.assertRaisesRegex(ValueError, 'appearance theme asset namespace is invalid'):
+            spec_identity.validate(invalid_path)
         for length in (64, 65, 80):
             boundary = copy.deepcopy(current)
             key = 'P' * length
