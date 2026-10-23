@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -267,3 +268,38 @@ class NativeSpecTests(unittest.TestCase):
         mismatch['appConfiguration']['bindings'][0]['themeDigest'] = 'sha256:' + 'cd' * 32
         with self.assertRaisesRegex(ValueError, 'theme digest does not match its binding'):
             spec_identity.validate(mismatch)
+
+        current = copy.deepcopy(value)
+        block = current['appConfiguration']
+        del block['bindings']
+        del block['themes']
+        theme = {
+            'kind': 'builtinDefault',
+            'key': 'PLUME:builtinDefault',
+            'name': 'Built-in default',
+            'version': 1,
+            'presentationKey': 'PLUME',
+            'assets': [],
+            'sourceCommit': current['commitSha'],
+        }
+        body = json.dumps(theme, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+        theme['digest'] = 'sha256:' + hashlib.sha256(body).hexdigest()
+        block['appearance'] = {
+            'contractVersion': 1,
+            'defaultPresentationKey': 'PLUME',
+            'presentations': [{
+                'presentationKey': 'PLUME',
+                'styleKey': 'PLUME',
+                'name': 'Plume',
+                'order': 10,
+                'directoryRevision': 1,
+                'featureKeys': ['HOME'],
+                'defaultThemeKey': 'PLUME:builtinDefault',
+                'themes': [theme],
+            }],
+        }
+        spec_identity.validate(current)
+        invalid = copy.deepcopy(current)
+        invalid['appConfiguration']['appearance']['presentations'][0]['themes'][0]['name'] = 'Changed'
+        with self.assertRaisesRegex(ValueError, 'appearance theme digest mismatch'):
+            spec_identity.validate(invalid)
