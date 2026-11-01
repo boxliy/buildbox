@@ -4,6 +4,8 @@ set -Eeuo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 
+export BUILDBOX_TEST_DART=${BUILDBOX_TEST_DART:-$(command -v dart)}
+export BUILDBOX_TEST_ROOT="$ROOT"
 export PATH="$ROOT/tests/bin:$PATH"
 export FIXTURE_DIR="$ROOT/tests/fixtures"
 export HAWK_BASE_URL='https://hawk.example'
@@ -24,10 +26,7 @@ printf '%s\n' 'UNCHANGED=1' >"$GITHUB_ENV"
 
 mkdir -p "$GITHUB_WORKSPACE/aviary-source/.git"
 mkdir -p "$GITHUB_WORKSPACE/aviary-source/waterfowl/apps/swan"
-# The adapter has its own real digest/signature tests in Aviary. This suite
-# substitutes its source executable to exercise buildbox's invocation boundary.
-mkdir -p "$GITHUB_WORKSPACE/aviary-source/waterfowl/tools"
-printf '%s\n' 'import sys; assert sys.argv[1] == "--spec" and sys.argv[3] == "--source"' >"$GITHUB_WORKSPACE/aviary-source/waterfowl/tools/build_spec_adapter.py"
+"$BUILDBOX_TEST_DART" run "$ROOT/test/support.dart" stub-source "$GITHUB_WORKSPACE/aviary-source"
 printf '%s\n' 'fixture' >"$GITHUB_WORKSPACE/aviary-source/waterfowl/pubspec.lock"
 mkdir -p "$BUILDBOX_STATE_DIR"
 
@@ -243,6 +242,7 @@ assert_file_contains "$TMP_DIR/compile-credential.err" 'compile runner must not 
 cp "$BUILDBOX_STATE_DIR/spec.json" "$TMP_DIR/pre-bluetooth-spec.json"
 for capabilities in '["bluetooth.scan"]' '["bluetooth.connect"]' '["bluetooth.scan","bluetooth.connect"]'; do
   jq --argjson capabilities "$capabilities" '.config.appProfile.deviceCapabilities += ($capabilities | map({key: .}))' "$TMP_DIR/pre-bluetooth-spec.json" >"$BUILDBOX_STATE_DIR/spec.json"
+  "$BUILDBOX_TEST_DART" run "$ROOT/test/support.dart" rehash "$BUILDBOX_STATE_DIR/spec.json"
   env -u HAWK_STAGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN "$ROOT/scripts/build-android"
   manifest="$GITHUB_WORKSPACE/aviary-source/waterfowl/apps/swan/android/app/src/release/AndroidManifest.xml"
   assert_file_contains "$manifest" 'android.permission.BLUETOOTH" android:maxSdkVersion="30"'
@@ -262,7 +262,7 @@ for capabilities in '["bluetooth.scan"]' '["bluetooth.connect"]' '["bluetooth.sc
   fi
 done
 assert_file_contains "$FLUTTER_LOG" "SWAN_ARTIFACT_KIND=unsigned_release"
-if "$ROOT/scripts/sign-android" 2>"$TMP_DIR/unsigned.err"; then
+if env HAWK_BASE_URL=http://fixture.invalid "$ROOT/scripts/sign-android" 2>"$TMP_DIR/unsigned.err"; then
   printf 'expected unsigned artifacts without signing material to fail\n' >&2
   exit 1
 fi
@@ -283,7 +283,7 @@ jq -e '
 MATERIAL_DIR="$TMP_DIR/material"
 mkdir -p "$MATERIAL_DIR"
 export BUILDBOX_SIGNING_MATERIAL_DIR="$MATERIAL_DIR"
-if "$ROOT/scripts/sign-android" 2>"$TMP_DIR/material.err"; then
+if env HAWK_BASE_URL=http://fixture.invalid "$ROOT/scripts/sign-android" 2>"$TMP_DIR/material.err"; then
   printf 'expected present signing material to fail closed in phase A\n' >&2
   exit 1
 fi

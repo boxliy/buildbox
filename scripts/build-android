@@ -103,7 +103,7 @@ BUILDBOX_SWAN_CONFIG_JSON="$STATE_DIR/swan-config.json"
 
 require_command git
 require_command jq
-require_command python3
+require_command dart
 require_command sha256sum
 require_command wc
 

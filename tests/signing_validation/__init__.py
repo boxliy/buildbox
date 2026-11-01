@@ -1,1 +1,0 @@
-"""Signing material validation tests."""

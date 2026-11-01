@@ -1,0 +1,32 @@
+[
+  {
+    "name": "unicode-order",
+    "json": "{\"𐀀\":\"supplementary\",\"\":\"bmp\",\"中文\":\"反馈\",\"a\":\"quote\\\"\\n\"}",
+    "canonical": "{\"a\":\"quote\\\"\\n\",\"中文\":\"反馈\",\"\":\"bmp\",\"𐀀\":\"supplementary\"}",
+    "sha256": "sha256:fd1e63215fd767520ed9009654693878b51f38a893af234499af4f07aba6bada"
+  },
+  {
+    "name": "integer-ids",
+    "json": "{\"runId\":\"105328607475277824\",\"large\":9223372036854775807,\"small\":0}",
+    "canonical": "{\"large\":9223372036854775807,\"runId\":\"105328607475277824\",\"small\":0}",
+    "sha256": "sha256:62db621ab2561a1770517c0ec94f6b8638ff0e23d3ad6323e95ce3d426a1e9b3"
+  },
+  {
+    "name": "negative-zero",
+    "json": "{\"z\":-0.0,\"n\":null,\"a\":[true,false,{},[]]}",
+    "canonical": "{\"a\":[true,false,{},[]],\"n\":null,\"z\":0}",
+    "sha256": "sha256:fb23724b0ee7f13a7f687161d5178fd96579015bcc33cc1198500e76abe02b04"
+  },
+  {
+    "name": "fractions",
+    "json": "{\"z\":1.0,\"fraction\":0.125,\"tiny\":1e-7}",
+    "canonical": "{\"fraction\":0.125,\"tiny\":1e-7,\"z\":1.0}",
+    "sha256": "sha256:99d9b1b168618bd3f3095227b08f61f7bf56e72799e4289eb306a1b5c12f3fac"
+  },
+  {
+    "name": "float-format-boundaries",
+    "json": "{\"tiny\":1e-6,\"negative\":-1e-6,\"small\":1e-5,\"integerDouble\":1e15,\"large\":1e16,\"larger\":1.2e20,\"huge\":1e30}",
+    "canonical": "{\"huge\":1e+30,\"integerDouble\":1000000000000000.0,\"large\":1e+16,\"larger\":1.2e+20,\"negative\":-1e-6,\"small\":0.00001,\"tiny\":1e-6}",
+    "sha256": "sha256:e4efb4fc598a1ac24dab662b7b682d9b31e9fd5ac203c0de83701f4d92990ede"
+  }
+]

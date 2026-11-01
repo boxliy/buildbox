@@ -112,8 +112,8 @@ contains this validator.
 The reusable job refuses `pull_request` and public repositories. It does not
 require `github.event_name` to be `workflow_call`, because the caller event
 remains `workflow_dispatch`. It checks out `validator_sha` with
-`actions/checkout` v4.2.2 (`11bd71901bbe5b1630ceea73d27597364c9af683`), Python
-setup v5.6.0 (`a26af69be951a213d495a4c3e4e4022e16d87065`), and Temurin 17 via
+`actions/checkout` v4.2.2 (`11bd71901bbe5b1630ceea73d27597364c9af683`), the fixed Flutter 3.47.4 / bundled Dart SDK via `subosito/flutter-action`
+(`fd55f4c5af5b953cc57a2be44cb082c8f6635e8e`), and Temurin 17 via
 `actions/setup-java` v4.7.0
 (`cf277c60eb25467037889841efdb72551f06f6c3`). The caller passes the existing
 `HAWK_OIDC_AUDIENCE` secret. `scripts/signing_validation/exchange-validation`
@@ -129,3 +129,6 @@ The job does not sign an application.
 
 Hawk still owns the API, SQL, and generated client. This repository does not
 guess a URL beyond the paths Rowan published on AVIARY-89.
+
+
+The validator is implemented by the repository-root `buildbox_tools` Dart package. Resolve its committed lockfile before exchanging a credential. `scripts/dart-tool validate-material` reads the offline contract on stdin; the existing shell wrapper performs Hawk envelope translation and posts only public results. Native OpenSSL/keytool perform certificate parsing, private-key challenge verification and crypto validation. No application source or application-provided tool runs in this stage.

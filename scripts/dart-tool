@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+set +x
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+exec dart run "$root/bin/buildbox.dart" "$@"
