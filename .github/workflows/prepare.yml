@@ -43,11 +43,20 @@ jobs:
       - name: Initialize isolated state directory
         run: echo "BUILDBOX_STATE_DIR=$RUNNER_TEMP/buildbox" >>"$GITHUB_ENV"
       - name: Checkout buildbox
-        uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: a8f6b3f194c118080a90be4de993a5b103e901c3
+          ref: 9056c1d28c091402960831cb7ef22e338731824c
           persist-credentials: false
+
+      - name: Setup trusted Dart toolchain
+        uses: subosito/flutter-action@fd55f4c5af5b953cc57a2be44cb082c8f6635e8e # v2.21.0
+        with:
+          flutter-version: '3.47.4'
+          cache: false
+
+      - name: Resolve trusted Buildbox tools
+        run: dart pub get --enforce-lockfile
 
       - name: Exchange prepare credential
         env:
@@ -95,7 +104,7 @@ jobs:
           permission-contents: read
 
       - name: Fetch exact source in trusted prepare
-        uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: ${{ steps.spec.outputs.checkout_repository }}
           ref: ${{ steps.spec.outputs.commit_sha }}
@@ -108,7 +117,7 @@ jobs:
         run: tar -cf "$RUNNER_TEMP/source.tar" -C "$GITHUB_WORKSPACE" aviary-source
 
       - name: Preserve source in private artifact transport
-        uses: actions/upload-artifact@50769540e7f4bd7f9d42d1b79bccb20935c6c3aa
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
         with:
           name: source-${{ github.run_id }}
           path: ${{ runner.temp }}/source.tar
@@ -120,7 +129,7 @@ jobs:
         run: scripts/export-job-inputs compile ${{ runner.temp }}/compile-input
 
       - name: Preserve compile inputs
-        uses: actions/upload-artifact@50769540e7f4bd7f9d42d1b79bccb20935c6c3aa # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: compile-input-${{ github.run_id }}
           path: ${{ runner.temp }}/compile-input
@@ -132,7 +141,7 @@ jobs:
         run: scripts/export-job-inputs sign ${{ runner.temp }}/sign-input
 
       - name: Preserve sign inputs
-        uses: actions/upload-artifact@50769540e7f4bd7f9d42d1b79bccb20935c6c3aa # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: sign-input-${{ github.run_id }}
           path: ${{ runner.temp }}/sign-input

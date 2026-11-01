@@ -32,16 +32,20 @@ jobs:
       - name: Initialize isolated state directory
         run: echo "BUILDBOX_STATE_DIR=$RUNNER_TEMP/buildbox" >>"$GITHUB_ENV"
       - name: Checkout buildbox
-        uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: a8f6b3f194c118080a90be4de993a5b103e901c3
+          ref: 9056c1d28c091402960831cb7ef22e338731824c
           persist-credentials: false
 
-      - name: Setup trusted Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - name: Setup trusted Dart toolchain
+        uses: subosito/flutter-action@fd55f4c5af5b953cc57a2be44cb082c8f6635e8e # v2.21.0
         with:
-          python-version: '3.13'
+          flutter-version: '3.47.4'
+          cache: false
+
+      - name: Resolve trusted Buildbox tools
+        run: dart pub get --enforce-lockfile
 
       - name: Setup signing Java
         if: inputs.platform == 'android'
@@ -60,13 +64,13 @@ jobs:
           echo 'BUILDBOX_BUNDLETOOL_SHA256=378b5434cd1378bef6b2bc527b8c7f0ff2584b273830335bce54d6d0813c8584' >>"$GITHUB_ENV"
 
       - name: Restore sign inputs
-        uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: sign-input-${{ github.run_id }}
           path: ${{ runner.temp }}/buildbox
 
       - name: Restore unsigned outputs
-        uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: unsigned-output-${{ github.run_id }}
           path: ${{ runner.temp }}/buildbox
@@ -82,12 +86,12 @@ jobs:
         run: |
           case "$PLATFORM" in
             android) scripts/sign-android ;;
-            ios) python3 scripts/sign_ios.py ;;
+            ios) scripts/dart-tool sign-ios ;;
             *) exit 1 ;;
           esac
 
       - name: Preserve signed outputs
-        uses: actions/upload-artifact@50769540e7f4bd7f9d42d1b79bccb20935c6c3aa # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: signed-output-${{ github.run_id }}
           path: |
