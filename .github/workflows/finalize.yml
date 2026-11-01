@@ -40,11 +40,20 @@ jobs:
       - name: Initialize isolated state directory
         run: echo "BUILDBOX_STATE_DIR=$RUNNER_TEMP/buildbox" >>"$GITHUB_ENV"
       - name: Checkout buildbox
-        uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: a8f6b3f194c118080a90be4de993a5b103e901c3
+          ref: 9056c1d28c091402960831cb7ef22e338731824c
           persist-credentials: false
+
+      - name: Setup trusted Dart toolchain
+        uses: subosito/flutter-action@fd55f4c5af5b953cc57a2be44cb082c8f6635e8e # v2.21.0
+        with:
+          flutter-version: '3.47.4'
+          cache: false
+
+      - name: Resolve trusted Buildbox tools
+        run: dart pub get --enforce-lockfile
 
       # Exchange before any artifact restore. A missing artifact must not block the callback.
       - name: Exchange finalize credential
@@ -77,14 +86,14 @@ jobs:
 
       - name: Restore sign inputs
         if: ${{ success() && inputs.prepare_result == 'success' && inputs.compile_result == 'success' && inputs.sign_result != 'cancelled' }}
-        uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: sign-input-${{ github.run_id }}
           path: ${{ runner.temp }}/buildbox
 
       - name: Restore signed outputs
         if: ${{ success() && inputs.sign_result == 'success' }}
-        uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: signed-output-${{ github.run_id }}
           path: ${{ runner.temp }}/buildbox

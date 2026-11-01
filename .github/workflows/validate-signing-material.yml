@@ -57,18 +57,22 @@ jobs:
           ref: ${{ inputs.validator_sha }}
           persist-credentials: false
 
+      - name: Setup trusted Dart toolchain
+        uses: subosito/flutter-action@fd55f4c5af5b953cc57a2be44cb082c8f6635e8e # v2.21.0
+        with:
+          flutter-version: '3.47.4'
+          cache: false
+
+      - name: Resolve trusted Buildbox tools
+        run: dart pub get --enforce-lockfile
+
       - name: Require the signing validator in this checkout
         shell: bash
         run: |
           set -euo pipefail
-          test -f scripts/signing_validation/validate.py
+          test -f lib/src/material_validation.dart
           test -f scripts/signing_validation/exchange-validation
           test -f scripts/signing_validation/validate-material
-
-      - name: Setup trusted Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: '3.13'
 
       - name: Setup Android keytool
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.7.0
