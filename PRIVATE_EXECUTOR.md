@@ -88,9 +88,9 @@ a failed attempt, never a second ambiguous dispatch.
 ## Resolved App configuration integration pins
 
 The example caller pins prepare/sign/finalize to
-`26c4ba6b8799f739dd53c73709b8b2a5dc0e52ff`; those workflows and compile check out
-scripts at `323cd9499c8f8c6d72cc74e1fbdced5be5f74db9`. The independent material
-validator's existing approval/pin contract is unchanged. These public reusable
+`c60a3b437cba672e38a253f39650fe5c063c5da1`; those workflows and compile check out
+scripts at `9056c1d28c091402960831cb7ef22e338731824c`. The independent material
+validator pins both its reusable workflow and validator_sha to `c60a3b437cba672e38a253f39650fe5c063c5da1`; those values must match. These public reusable
 SHAs are not an approved private caller SHA. The private caller's operator must
 record its resulting exact commit in Hawk before authorized product execution.
 These script pins include Build Spec v2 `appConfiguration` validation and Android

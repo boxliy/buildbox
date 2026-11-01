@@ -203,9 +203,11 @@ void main() {
   test(
     'delivered caller reusable and Dart-tool pins match exact committed bytes',
     () async {
-      final caller = File('.github/workflows/build.yml').readAsStringSync();
+      final caller =
+          File('.github/workflows/build.yml').readAsStringSync() +
+          File('.github/workflows/validate-material.yml').readAsStringSync();
       for (final match in RegExp(
-        r'uses: boxliy/buildbox/\.github/workflows/(prepare|sign|finalize)\.yml@([0-9a-f]{40})',
+        r'uses: boxliy/buildbox/\.github/workflows/(prepare|sign|finalize|validate-signing-material)\.yml@([0-9a-f]{40})',
       ).allMatches(caller)) {
         final path = '.github/workflows/${match[1]}.yml';
         final committed = await tool(['git', 'show', '${match[2]}:$path']);
@@ -216,6 +218,16 @@ void main() {
         );
       }
       final pins = <String>{};
+      final validator =
+          loadYaml(
+                File(
+                  '.github/workflows/validate-material.yml',
+                ).readAsStringSync(),
+              )
+              as YamlMap;
+      final validationJob = validator['jobs']['validate'];
+      final validatorSha = validationJob['with']['validator_sha'] as String;
+      expect(validationJob['uses'], endsWith('@$validatorSha'));
       for (final file in Directory(
         '.github/workflows',
       ).listSync().whereType<File>()) {
@@ -253,10 +265,14 @@ void main() {
           );
         }
       }
+      for (final path in paths) {
+        expect(
+          await tool(['git', 'show', '$validatorSha:$path']),
+          File(path).readAsStringSync(),
+          reason: 'material validator code pin $path',
+        );
+      }
     },
-    skip: Platform.environment['BUILDBOX_VERIFY_PINS'] != '1'
-        ? 'Run with BUILDBOX_VERIFY_PINS=1 after staged script/reusable/caller commits exist'
-        : false,
   );
   test(
     'privileged jobs and artifact transport stay private, compile has no stage credential',

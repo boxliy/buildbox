@@ -119,7 +119,6 @@ bash tests/contract.sh
 dart pub get --enforce-lockfile
 dart analyze
 dart test
-BUILDBOX_VERIFY_PINS=1 dart test test/workflow_test.dart
 dart test test/source_catalog_test.dart
 BUILDBOX_AVIARY_CHECKOUT=/path/to/committed/aviary dart test test/source_catalog_test.dart
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/{build,prepare,sign,finalize}.yml
