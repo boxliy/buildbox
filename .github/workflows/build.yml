@@ -30,7 +30,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/prepare.yml@bbded296d171442d4d942069248b9d7fab6c5b3b
+    uses: boxliy/buildbox/.github/workflows/prepare.yml@c60a3b437cba672e38a253f39650fe5c063c5da1
     with:
       build_run_id: ${{ inputs.build_run_id }}
     secrets:
@@ -50,31 +50,26 @@ jobs:
       - name: Initialize isolated compile state
         run: echo "BUILDBOX_STATE_DIR=$RUNNER_TEMP/buildbox" >>"$GITHUB_ENV"
       - name: Checkout buildbox
-        uses: actions/checkout@11bd71901bbe5b1635a9e225c5f9a0cfbc0a8a3c # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: a8f6b3f194c118080a90be4de993a5b103e901c3
+          ref: 9056c1d28c091402960831cb7ef22e338731824c
           persist-credentials: false
 
       - name: Restore compile inputs
-        uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: compile-input-${{ github.run_id }}
           path: ${{ runner.temp }}/buildbox
 
       - name: Restore frozen source without a repository credential
-        uses: actions/download-artifact@fa0a81b094735e8772adab4bb149259f5d49d87b
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: source-${{ github.run_id }}
           path: ${{ runner.temp }}/source-input
 
       - name: Restore source permissions
         run: tar -xf "$RUNNER_TEMP/source-input/source.tar" -C "$GITHUB_WORKSPACE"
-
-      - name: Setup Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.13'
 
       - name: Setup Java
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.7.0
@@ -88,6 +83,9 @@ jobs:
           flutter-version: ${{ needs.prepare.outputs.flutter_version }}
           cache: false
 
+      - name: Resolve trusted Buildbox tools
+        run: dart pub get --enforce-lockfile
+
       - name: Compile unsigned artifacts
         env:
           PLATFORM: ${{ needs.prepare.outputs.platform }}
@@ -99,7 +97,7 @@ jobs:
           esac
 
       - name: Preserve unsigned outputs
-        uses: actions/upload-artifact@50769540e7f4bd7f9d42d1b79bccb20935c6c3aa # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: unsigned-output-${{ github.run_id }}
           path: |
@@ -113,7 +111,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/sign.yml@bbded296d171442d4d942069248b9d7fab6c5b3b
+    uses: boxliy/buildbox/.github/workflows/sign.yml@c60a3b437cba672e38a253f39650fe5c063c5da1
     with:
       build_run_id: ${{ inputs.build_run_id }}
       platform: ${{ needs.prepare.outputs.platform }}
@@ -127,7 +125,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/finalize.yml@bbded296d171442d4d942069248b9d7fab6c5b3b
+    uses: boxliy/buildbox/.github/workflows/finalize.yml@c60a3b437cba672e38a253f39650fe5c063c5da1
     with:
       build_run_id: ${{ inputs.build_run_id }}
       prepare_result: ${{ needs.prepare.result }}
