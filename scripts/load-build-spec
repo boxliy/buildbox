@@ -90,7 +90,7 @@ else
   [[ "$ANDROID_APPLICATION_ID" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || die 'androidApplicationId is invalid'
 fi
 
-ACTUAL_SPEC_HASH=$(python3 "$SCRIPT_DIR/spec_identity.py" "$SPEC_RESPONSE") || die 'invalid Build Spec identity'
+ACTUAL_SPEC_HASH=$("$SCRIPT_DIR/dart-tool" spec-identity "$SPEC_RESPONSE") || die 'invalid Build Spec identity'
 [[ "$SPEC_HASH" == "$ACTUAL_SPEC_HASH" ]] || die 'specHash does not match config'
 
 TARGETS_RAW=$(jq -cer '.targets // .config.targets' "$SPEC_RESPONSE") || die 'targets must be a JSON array'

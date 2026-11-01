@@ -18,20 +18,7 @@ write_unsigned_zip() {
   local path=$1
   local payload=$2
   local kind=${FLUTTER_OUTPUT_KIND:-unsigned}
-  python3 - "$path" "$payload" "$kind" <<'PY'
-import sys
-import zipfile
-
-path, payload, kind = sys.argv[1:]
-with zipfile.ZipFile(path, "w") as archive:
-    archive.writestr("AndroidManifest.xml", payload)
-    if kind == "debug":
-        archive.writestr("META-INF/ANDROIDD.SF", "debug")
-        archive.writestr("META-INF/ANDROIDD.RSA", "debug")
-    elif kind == "signed":
-        archive.writestr("META-INF/CERT.SF", "signed")
-        archive.writestr("META-INF/CERT.RSA", "signed")
-PY
+  "$BUILDBOX_TEST_DART" run "$BUILDBOX_TEST_ROOT/test/support.dart" zip "$path" "$payload" "$kind"
 }
 
 if [[ "$1" == "build" && "$2" == "apk" ]]; then

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-[[ "$1" == run && "$2" == tool/build_brand_assets.dart && "$3" == "$BUILDBOX_STATE_DIR/spec.json" && -d "$4/waterfowl/apps/swan" ]] || exit 1
-printf '%s\n' 'native-brand-assets' >>"${FLUTTER_LOG:?}"
+if [[ "$1" == pub && "$2" == get && "$3" == --enforce-lockfile ]]; then exit 0; fi
+if [[ "$1" == run && "$2" == tool/build_brand_assets.dart ]]; then
+  [[ "$3" == "$BUILDBOX_STATE_DIR/spec.json" && -d "$4/waterfowl/apps/swan" ]] || exit 1
+  printf '%s\n' 'native-brand-assets' >>"${FLUTTER_LOG:?}"
+  exit 0
+fi
+exec "${BUILDBOX_TEST_DART:?}" "$@"

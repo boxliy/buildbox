@@ -3,20 +3,17 @@ set -Eeuo pipefail
 set +x
 state=${BUILDBOX_STATE_DIR:?}
 source_root=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:?}/aviary-source}
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # This is untrusted compile code, executed only on the credential-free runner.
-if [[ "$(jq -r '.config.schemaVersion' "$state/spec.json")" == 2 ]]; then
-  # Recheck identity after transport between prepare and the credential-free job.
-  actual=$(python3 "${BASH_SOURCE[0]%/*}/spec_identity.py" "$state/spec.json")
-  expected=$(jq -er '.specHash' "$state/spec.json")
-  [[ "$actual" == "$expected" ]] || { echo 'Prepared Spec digest mismatch' >&2; exit 1; }
-  python3 "${BASH_SOURCE[0]%/*}/verify-source-catalog" "$state/spec.json" "$source_root"
-  jq -e '.config' "$state/spec.json" >"$state/native-config.json"
-  python3 "$source_root/waterfowl/tools/app_assembler/assemble.py" --spec "$state/native-config.json" --checkout "$source_root"
-else
-  # Only an already-dispatched historical snapshot can reach the v1 adapter in
-  # its pinned historical checkout. Hawk refuses all new v1 attempts.
-  python3 "$source_root/waterfowl/tools/build_spec_adapter.py" --spec "$state/spec.json" --source "$source_root"
-fi
+[[ -z "${HAWK_STAGE_TOKEN+x}" && -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN+x}" ]] || { echo 'compile runner must not carry stage credentials' >&2; exit 1; }
+actual=$("$script_dir/dart-tool" spec-identity "$state/spec.json")
+expected=$(jq -er '.specHash' "$state/spec.json")
+[[ "$actual" == "$expected" ]] || { echo 'Prepared Spec digest mismatch' >&2; exit 1; }
+# Bootstrap application-source tools only on the isolated compile runner.
+(cd "$source_root/waterfowl/tools/swan_build" && dart pub get --enforce-lockfile)
+"$script_dir/dart-tool" verify-source-catalog "$state/spec.json" "$source_root"
+jq -e '.config' "$state/spec.json" >"$state/native-config.json"
+dart run "$source_root/waterfowl/tools/swan_build/bin/assemble.dart" --spec "$state/native-config.json" --checkout "$source_root" --flutter-executable "$(command -v flutter)"
 expected=$(jq -er '.config.frozenInputs.flutterVersion' "$state/spec.json")
 actual=$(flutter --version --machine | jq -er '.frameworkVersion')
 [[ "$actual" == "$expected" ]] || { echo 'Flutter toolchain does not match frozen inputs' >&2; exit 1; }

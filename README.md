@@ -1,7 +1,8 @@
 # Aviary buildbox
 
 Buildbox executes immutable native Build Spec v2 attempts dispatched by Hawk. The only
-workflow input is `build_run_id`. A GitHub success alone never authorizes a download.
+business input is `build_run_id`, accompanied by Hawk's one-time `dispatch_proof`.
+A GitHub success alone never authorizes a download.
 
 ## Execution and trust
 
@@ -42,16 +43,16 @@ Required operator configuration (do not add secret values to this repository):
 
 Targets are exactly `apk`, `aab`, `ipa`; aliases are rejected. Android supports APK
 and AAB together; iOS supports IPA only. Versioned canonical JSON SHA-256 covers
-`config`, excluding the derived `artifactPrefix`. Duplicate keys, floating point
-numbers, unknown schema versions and noncanonical targets fail. The shared Rust
-and Python vectors are `tests/fixtures/build_spec_v{1,2}_identity.json`.
+`config`, excluding the derived `artifactPrefix`. Duplicate keys, nonfinite numbers,
+out-of-range integers, unknown schema versions and noncanonical targets fail. The shared Rust
+and Dart vectors are `tests/fixtures/build_spec_v2_identity.json` and `test/fixtures/dart_canonical_vectors.json`.
 
 Native v2 freezes a source capability catalog, its canonical digest and one
 Presentation per selected Feature. Prepare validates the catalog/source/platform
 binding. Compile rechecks the transported Spec digest and re-exports the catalog
 using the same exact-source generator as registration. It compares the full
 catalog, canonical digest and working lockfile before invoking the code-owned
-`waterfowl/tools/app_assembler/assemble.py` in the exact source checkout, and
+`waterfowl/tools/swan_build/bin/assemble.dart` in the exact source checkout, and
 enforces the Flutter version and committed dependency lockfile. The assembler
 rejects unknown implementations and backend-supplied code locations.
 
@@ -60,8 +61,7 @@ The source branding tool generates native image resources. Android permissions,
 iOS usage descriptions, application identifiers and versions derive from the
 frozen inputs. Signing still happens exclusively in isolated signing jobs.
 
-Historical v1 validation and its adapter in the pinned historical checkout remain
-available for already-dispatched tasks. Hawk refuses new v1 attempts and dispatch.
+This executor accepts only the current native schema; old source adapters are removed.
 No current native build requires a page Release or a renderer payload.
 
 ## Material validation
@@ -116,20 +116,20 @@ run. A proven Android private-key challenge does not carry those checks.
 
 ```sh
 bash tests/contract.sh
-python3 -m unittest discover -s tests -p 'test_*.py'
-BUILDBOX_AVIARY_CHECKOUT=/path/to/aviary python3 -m unittest tests.test_source_catalog
+dart pub get --enforce-lockfile
+dart analyze
+dart test
+BUILDBOX_VERIFY_PINS=1 dart test test/workflow_test.dart
+dart test test/source_catalog_test.dart
+BUILDBOX_AVIARY_CHECKOUT=/path/to/committed/aviary dart test test/source_catalog_test.dart
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/{build,prepare,sign,finalize}.yml
 ```
 
-The opt-in catalog test fetches the supplied Aviary commit into a temporary shallow
-checkout, then uses the workflow's tar commands to restore it at a new path. It
-invokes the real exporter with the prepare path unavailable, rejects a catalog
-change even with a newly calculated Spec hash, and fails closed if Git metadata
-is missing. The tar must include the checkout's self-contained `.git` object
+The catalog tests create exact committed source fixtures, invoke their Dart exporter, reject a catalog change even with a newly calculated Spec hash, and reject checkout or dependency-lock drift. The tar must include the checkout's self-contained `.git` object
 database; a linked-worktree gitfile or a Git-free source archive is insufficient
 for both catalog export and native assembly.
 Source code runs only on the credential-free compile runner.
-Contract tests use isolated HTTP/tool fixtures. Python tests cover real JAR
+Contract tests use isolated HTTP/tool fixtures. Dart tests cover real JAR
 signature verification, archive rejection, iOS policy, canonical hashes and
 cross-job failure/cancellation branches. They do not prove an Android SDK or
 macOS signing run. Real Actions execution, signing material, storage, devices,
@@ -137,13 +137,13 @@ installation and upgrade acceptance are deferred until business configuration
 is supplied. Unsigned, fixture and simulator results are not signed delivery.
 
 
-### Frozen tenant signing integration (Spec v1)
+### Frozen tenant signing integration
 
 Hawk freezes tenant asset/version IDs, alias, purpose and certificate fingerprint,
 plus each iOS component's profile version/UUID and minimal requested entitlements.
 The sign stage receives only the current run/attempt/platform's exact material
 versions. Child components do not inherit all host or profile privileges.
-`configure_ios.py` applies fixed bundle/team/name/version and no-sign settings to
+`dart run bin/buildbox.dart ios-configure` applies fixed bundle/team/name/version and no-sign settings to
 Runner and the source-approved `iosComponentTargets` before credential-free device
 compilation (`flutter build ios --release --no-codesign`), with no distribution
 export on the compile runner. The unsigned IPA transport is assembled from
@@ -158,11 +158,7 @@ Execution success alone never grants download. Revocation blocks future material
 upload, retry and download authorization; already issued plaintext or presigned
 URLs cannot be remotely erased and remain bounded by their original lifetime.
 
-`spec_identity.py` validates current-v1 semantics before computing the canonical
-hash. The shared vector in `tests/fixtures/build_spec_v1_identity.json` is also
-owned by Hawk. Inline `brandResources` are immutable nonsecret PNG snapshots,
-with resource ID/revision, bytes and SHA-256. They are materialized only at their
-fixed brand paths before the Swan adapter verifies frozen resource digests.
+`dart run bin/buildbox.dart spec-identity` validates the current native Spec and its canonical hash. The frozen native identity vector and shared Hawk canonical vectors cover Unicode key ordering, i64 values, floating-point boundaries and negative zero. Inline `brandResources` remain immutable nonsecret PNG snapshots with resource version, bytes and SHA-256. No legacy source adapter or alternate Python implementation is shipped.
 
 Linux fixture checks cover policy, transport and signing orchestration; they do
 not establish real Apple trust, macOS archive/export, device installation,

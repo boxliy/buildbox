@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 set +x
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-exec python3 "$SCRIPT_DIR/sign_android.py"
+exec "$(dirname "${BASH_SOURCE[0]}")/dart-tool" sign-android
