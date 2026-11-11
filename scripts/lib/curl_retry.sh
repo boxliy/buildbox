@@ -8,9 +8,11 @@ curl_retry() {
   local attempt=1
   local max_attempts=5
   local delay=${BUILDBOX_RETRY_DELAY:-2}
+  local max_time=${BUILDBOX_CURL_TIMEOUT:-30}
   local status=0
   local out err previous_umask
   [[ "$delay" =~ ^[0-9]+([.][0-9]+)?$ ]] || delay=2
+  [[ "$max_time" =~ ^[0-9]+([.][0-9]+)?$ ]] || max_time=30
   previous_umask=$(umask)
   umask 077
   out=$(mktemp)
@@ -21,8 +23,16 @@ curl_retry() {
     : >"$out"
     : >"$err"
     set +e
-    curl "$@" >"$out" 2>"$err"
+    if command -v timeout >/dev/null 2>&1 && [[ "$max_time" != "0" ]]; then
+      timeout "$max_time" curl "$@" >"$out" 2>"$err"
+    else
+      curl "$@" >"$out" 2>"$err"
+    fi
     status=$?
+    if [[ "$status" -eq 124 ]]; then
+      status=28
+      printf 'curl_retry: attempt timed out\n' >>"$err"
+    fi
     set -e
     if [[ "$status" -eq 0 ]]; then
       cat "$out"

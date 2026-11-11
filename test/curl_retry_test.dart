@@ -86,4 +86,54 @@ curl_retry --fail --silent --show-error https://example.invalid/probe
       expect(calls, 1);
     },
   );
+
+  test('curl_retry kills a hung attempt and retries it as a timeout', () async {
+    final bin = await Directory.systemTemp.createTemp('curl-timeout-bin-');
+    final count = File('${bin.path}/attempts');
+    final argv = File('${bin.path}/argv.log');
+    final curl = File('${bin.path}/curl');
+    await curl.writeAsString(r'''#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$CURL_ARGV_LOG"
+attempt=0
+if [[ -f "$CURL_ATTEMPT_FILE" ]]; then
+  attempt=$(cat "$CURL_ATTEMPT_FILE")
+fi
+attempt=$((attempt + 1))
+printf '%s' "$attempt" >"$CURL_ATTEMPT_FILE"
+if [[ "$attempt" -eq 1 ]]; then
+  sleep 30
+  exit 0
+fi
+printf 'ready'
+''');
+    await Process.run('chmod', ['755', curl.path]);
+    final script =
+        '''
+set -euo pipefail
+source "${Directory.current.path}/scripts/lib/curl_retry.sh"
+export PATH="${bin.path}:\$PATH"
+export BUILDBOX_RETRY_DELAY=0
+export BUILDBOX_CURL_TIMEOUT=1
+export CURL_ATTEMPT_FILE="${count.path}"
+export CURL_ARGV_LOG="${argv.path}"
+curl_retry --fail --silent --show-error https://example.invalid/probe
+''';
+    final watch = Stopwatch()..start();
+    final result = await Process.run('bash', ['-c', script]);
+    watch.stop();
+    expect(result.exitCode, 0, reason: '${result.stdout}${result.stderr}');
+    expect(result.stdout, 'ready');
+    expect(result.stderr, contains('curl_retry: attempt timed out'));
+    expect(watch.elapsed, lessThan(const Duration(seconds: 8)));
+    expect(count.readAsStringSync(), '2');
+    expect(
+      argv.readAsLinesSync(),
+      List.filled(
+        2,
+        '--fail --silent --show-error https://example.invalid/probe',
+      ),
+    );
+    await bin.delete(recursive: true);
+  });
 }
