@@ -30,10 +30,10 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/prepare.yml@af2adde9ee16b24349652e1b29547f7bdf30b2c6
+    uses: boxliy/buildbox/.github/workflows/prepare.yml@2956e01c5a92926922b557e200c00f680e711f63
     with:
       build_run_id: ${{ inputs.build_run_id }}
-      tools_sha: af2adde9ee16b24349652e1b29547f7bdf30b2c6
+      tools_sha: 2956e01c5a92926922b557e200c00f680e711f63
     secrets:
       HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
       HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
@@ -55,7 +55,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: af2adde9ee16b24349652e1b29547f7bdf30b2c6
+          ref: 2956e01c5a92926922b557e200c00f680e711f63
           persist-credentials: false
 
       - name: Restore compile inputs
@@ -113,11 +113,11 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/sign.yml@af2adde9ee16b24349652e1b29547f7bdf30b2c6
+    uses: boxliy/buildbox/.github/workflows/sign.yml@2956e01c5a92926922b557e200c00f680e711f63
     with:
       build_run_id: ${{ inputs.build_run_id }}
       platform: ${{ needs.prepare.outputs.platform }}
-      tools_sha: af2adde9ee16b24349652e1b29547f7bdf30b2c6
+      tools_sha: 2956e01c5a92926922b557e200c00f680e711f63
     secrets:
       HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
       HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
@@ -128,10 +128,10 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/finalize.yml@af2adde9ee16b24349652e1b29547f7bdf30b2c6
+    uses: boxliy/buildbox/.github/workflows/finalize.yml@2956e01c5a92926922b557e200c00f680e711f63
     with:
       build_run_id: ${{ inputs.build_run_id }}
-      tools_sha: af2adde9ee16b24349652e1b29547f7bdf30b2c6
+      tools_sha: 2956e01c5a92926922b557e200c00f680e711f63
       prepare_result: ${{ needs.prepare.result }}
       compile_result: ${{ needs.compile.result }}
       sign_result: ${{ needs.sign.result }}
