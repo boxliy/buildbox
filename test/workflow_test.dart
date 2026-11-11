@@ -314,6 +314,32 @@ void main() {
       expect(compile, contains('persist-credentials: false'));
     },
   );
+  test('validation credential exchange is its own step', () {
+    final workflow =
+        loadYaml(
+              File(
+                '.github/workflows/validate-signing-material.yml',
+              ).readAsStringSync(),
+            )
+            as YamlMap;
+    final steps = workflow['jobs']['validate']['steps'] as YamlList;
+    final names = steps
+        .map((step) => (step as YamlMap)['name'] as String)
+        .toList();
+    final exchange = names.indexOf('Exchange validation credential');
+    final validator = names.indexOf('Run signing validator');
+    expect(exchange, greaterThanOrEqualTo(0));
+    expect(validator, greaterThan(exchange));
+    expect(
+      (steps[exchange] as YamlMap)['run'],
+      'scripts/signing_validation/exchange-validation',
+    );
+    expect(
+      (steps[validator] as YamlMap)['run'],
+      'scripts/signing_validation/validate-material',
+    );
+  });
+
   test('artifact scopes retention and sensitive exclusions preserved', () {
     for (final file in Directory(
       '.github/workflows',
