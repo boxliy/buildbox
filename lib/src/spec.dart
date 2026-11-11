@@ -7,16 +7,20 @@ void keys(Json value, Set<String> allowed, {bool exact = false}) => require(
   'unknown or missing field',
 );
 const shaPattern = r'sha256:[0-9a-f]{64}';
-bool validSourceRef(String value) =>
-    !value.startsWith('-') &&
-    !value.contains('..') &&
-    !RegExp(r'\s').hasMatch(value) &&
-    value.codeUnits.every((unit) => unit >= 32) &&
-    (value == 'latest' ||
-        value == 'main' ||
-        value == 'local' ||
-        RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(value) ||
-        RegExp(r'^v[0-9]+\.[0-9]+\.[0-9]+$').hasMatch(value));
+bool validSourceRef(String value) {
+  if (value.isEmpty || value.length > 128 || value.startsWith('-'))
+    return false;
+  if (value == 'latest' || value == 'main' || value == 'local') return true;
+  if (value.contains('..') ||
+      value.startsWith('/') ||
+      value.endsWith('/') ||
+      RegExp(r'\s').hasMatch(value)) {
+    return false;
+  }
+  return value.codeUnits.every((unit) => unit >= 32 && unit < 127) &&
+      RegExp(r'^[A-Za-z0-9._/-]+$').hasMatch(value);
+}
+
 String? readSourceRef(Json config, Json frozen) {
   final top = config['sourceRef'];
   final nested = frozen['sourceRef'];

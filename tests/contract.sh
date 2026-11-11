@@ -554,6 +554,11 @@ MAIN_COMMIT=$("${GIT[@]}" -C "$SOURCE_FIXTURE/src" rev-parse main)
 PIN=$(PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" v1.0.0)
 PIN_COMMIT=$("${GIT[@]}" -C "$SOURCE_FIXTURE/src" rev-parse v1.0.0)
 [[ "$PIN" == "$PIN_COMMIT" ]] || { printf 'tag checkout mismatch\n' >&2; exit 1; }
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" branch release/v1.2.3 v1.2.0
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" push --quiet origin release/v1.2.3
+BRANCH=$(PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" release/v1.2.3)
+BRANCH_COMMIT=$("${GIT[@]}" -C "$SOURCE_FIXTURE/src" rev-parse v1.2.0)
+[[ "$BRANCH" == "$BRANCH_COMMIT" ]] || { printf 'branch checkout mismatch\n' >&2; exit 1; }
 LOCAL_BASE=$("${GIT[@]}" -C "$SOURCE_FIXTURE/work" rev-parse HEAD)
 "${GIT[@]}" -C "$SOURCE_FIXTURE/work" remote set-url origin "https://invalid.example/not/a-repo.git"
 LOCAL=$(PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" local)
