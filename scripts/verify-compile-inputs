@@ -14,7 +14,7 @@ expected=$(jq -er '.specHash' "$state/spec.json")
 "$script_dir/dart-tool" verify-source-catalog "$state/spec.json" "$source_root"
 jq -e '.config' "$state/spec.json" >"$state/native-config.json"
 dart run "$source_root/waterfowl/tools/swan_build/bin/assemble.dart" --spec "$state/native-config.json" --checkout "$source_root" --flutter-executable "$(command -v flutter)"
-expected=$(jq -er '.config.frozenInputs.flutterVersion' "$state/spec.json")
+expected=$("$script_dir/resolve-flutter-version" "$source_root" "$state/spec.json")
 actual=$(flutter --version --machine | jq -er '.frameworkVersion')
 [[ "$actual" == "$expected" ]] || { echo 'Flutter toolchain does not match frozen inputs' >&2; exit 1; }
 [[ -f "$source_root/waterfowl/pubspec.lock" ]] || { echo 'Workspace lockfile is missing' >&2; exit 1; }

@@ -5,6 +5,10 @@ on:
       build_run_id:
         required: true
         type: string
+      tools_sha:
+        description: Delivered Buildbox tools revision
+        required: true
+        type: string
     secrets:
       HAWK_BASE_URL:
         required: true
@@ -33,7 +37,7 @@ jobs:
     outputs:
       checkout_repository: ${{ steps.spec.outputs.checkout_repository }}
       commit_sha: ${{ steps.spec.outputs.commit_sha }}
-      flutter_version: ${{ steps.platform.outputs.flutter_version }}
+      flutter_version: ${{ steps.flutter.outputs.flutter_version }}
       platform: ${{ steps.platform.outputs.platform }}
       failure_reason: ${{ steps.failure.outputs.reason }}
     env:
@@ -46,7 +50,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 9056c1d28c091402960831cb7ef22e338731824c
+          ref: ${{ inputs.tools_sha }}
           persist-credentials: false
 
       - name: Setup trusted Dart toolchain
@@ -88,8 +92,6 @@ jobs:
           test -n "$ALLOWED_SOURCE" && test "$SOURCE" = "$ALLOWED_SOURCE"
           platform=$(jq -er '.config.platform | select(. == "android" or . == "ios")' "$BUILDBOX_STATE_DIR/spec.json")
           echo "platform=$platform" >>"$GITHUB_OUTPUT"
-          flutter_version=$(jq -er '.config.frozenInputs.flutterVersion | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$BUILDBOX_STATE_DIR/spec.json")
-          echo "flutter_version=$flutter_version" >>"$GITHUB_OUTPUT"
           echo "owner=${SOURCE%%/*}" >>"$GITHUB_OUTPUT"
           echo "repository=${SOURCE#*/}" >>"$GITHUB_OUTPUT"
 
@@ -103,15 +105,15 @@ jobs:
           repositories: ${{ steps.platform.outputs.repository }}
           permission-contents: read
 
-      - name: Fetch exact source in trusted prepare
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          repository: ${{ steps.spec.outputs.checkout_repository }}
-          ref: ${{ steps.spec.outputs.commit_sha }}
-          token: ${{ steps.source-token.outputs.token }}
-          path: aviary-source
-          persist-credentials: false
-          submodules: recursive
+      - name: Fetch source for sourceRef
+        env:
+          BUILDBOX_SOURCE_TOKEN: ${{ steps.source-token.outputs.token }}
+          BUILDBOX_CHECKOUT_REPOSITORY: ${{ steps.spec.outputs.checkout_repository }}
+        run: scripts/checkout-source "$GITHUB_WORKSPACE/aviary-source" "${{ steps.spec.outputs.source_ref }}"
+
+      - name: Resolve Flutter version from source
+        id: flutter
+        run: scripts/resolve-flutter-version "$GITHUB_WORKSPACE/aviary-source" "$BUILDBOX_STATE_DIR/spec.json"
 
       - name: Preserve source permissions and Git object identity
         run: tar -cf "$RUNNER_TEMP/source.tar" -C "$GITHUB_WORKSPACE" aviary-source

@@ -320,6 +320,7 @@ source "$BUILDBOX_STATE_DIR/spec.env"
 [[ ! -e "$BUILDBOX_STATE_DIR/artifacts.json" ]]
 assert_file_contains "$GITHUB_OUTPUT" "checkout_repository=boxliy/aviary"
 assert_file_contains "$GITHUB_OUTPUT" "commit_sha=1111111111111111111111111111111111111111"
+assert_file_contains "$GITHUB_OUTPUT" "source_ref=1111111111111111111111111111111111111111"
 assert_file_contains "$GITHUB_OUTPUT" "targets=aab,apk"
 grep -q '^UNCHANGED=1$' "$GITHUB_ENV"
 grep -q '^HAWK_STAGE_TOKEN=' "$GITHUB_ENV"
@@ -518,5 +519,49 @@ if "$ROOT/scripts/report-result" failed "prepare credential" >/dev/null 2>"$TMP_
   exit 1
 fi
 assert_file_contains "$TMP_DIR/prepare-callback.err" "callback requires a finalize stage credential"
+
+
+# sourceRef checkout resolves semantic tags, main, and an existing local tree.
+SOURCE_FIXTURE=$(mktemp -d)
+GIT=(/usr/bin/env PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" git)
+"${GIT[@]}" init -b main --quiet "$SOURCE_FIXTURE/src"
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" config user.email fixture@example.invalid
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" config user.name "Buildbox Fixture"
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" config commit.gpgsign false
+printf 'one\n' >"$SOURCE_FIXTURE/src/README"
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" add README
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" commit --quiet -m one
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" tag v1.0.0
+printf 'two\n' >"$SOURCE_FIXTURE/src/README"
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" commit --quiet -am two
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" tag v1.2.0
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" tag v1.2.0-rc.1
+printf 'ten\n' >"$SOURCE_FIXTURE/src/README"
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" commit --quiet -am ten
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" tag v1.10.0
+printf 'main\n' >"$SOURCE_FIXTURE/src/README"
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" commit --quiet -am main
+"${GIT[@]}" init --bare --quiet "$SOURCE_FIXTURE/origin"
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" remote add origin "$SOURCE_FIXTURE/origin"
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" push --quiet origin main --tags
+"${GIT[@]}" clone --quiet "$SOURCE_FIXTURE/origin" "$SOURCE_FIXTURE/work"
+LATEST=$(PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" latest)
+TAG_COMMIT=$("${GIT[@]}" -C "$SOURCE_FIXTURE/src" rev-parse v1.10.0)
+[[ "$LATEST" == "$TAG_COMMIT" ]] || { printf 'latest did not resolve the highest version tag\n' >&2; exit 1; }
+MAIN=$(PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" main)
+MAIN_COMMIT=$("${GIT[@]}" -C "$SOURCE_FIXTURE/src" rev-parse main)
+[[ "$MAIN" == "$MAIN_COMMIT" ]] || { printf 'main checkout mismatch\n' >&2; exit 1; }
+PIN=$(PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" v1.0.0)
+PIN_COMMIT=$("${GIT[@]}" -C "$SOURCE_FIXTURE/src" rev-parse v1.0.0)
+[[ "$PIN" == "$PIN_COMMIT" ]] || { printf 'tag checkout mismatch\n' >&2; exit 1; }
+LOCAL_BASE=$("${GIT[@]}" -C "$SOURCE_FIXTURE/work" rev-parse HEAD)
+"${GIT[@]}" -C "$SOURCE_FIXTURE/work" remote set-url origin "https://invalid.example/not/a-repo.git"
+LOCAL=$(PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" local)
+[[ "$LOCAL" == "$LOCAL_BASE" ]] || { printf 'local checkout moved HEAD\n' >&2; exit 1; }
+if PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" '../main' >/dev/null 2>"$TMP_DIR/bad-ref.err"; then
+  printf 'expected illegal sourceRef to fail\n' >&2
+  exit 1
+fi
+assert_file_contains "$TMP_DIR/bad-ref.err" "illegal sourceRef"
 
 printf 'contract tests passed\n'

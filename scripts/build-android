@@ -198,8 +198,20 @@ CUSTOM_SCHEME=${BUILDBOX_ANDROID_APPLICATION_ID//_/-}
 } >"$NATIVE_MANIFEST"
 
 ACTUAL_SHA=$(git -C "$SOURCE_ROOT" rev-parse HEAD)
-if [[ "$ACTUAL_SHA" != "$BUILDBOX_COMMIT_SHA" ]]; then
-  die "checked out HEAD $ACTUAL_SHA does not match spec commit $BUILDBOX_COMMIT_SHA"
+SOURCE_REF=${BUILDBOX_SOURCE_REF:-}
+if [[ "$ACTUAL_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  :
+else
+  die "build checkout has no commit"
+fi
+if [[ -z "$SOURCE_REF" && "$BUILDBOX_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  if [[ "$ACTUAL_SHA" != "$BUILDBOX_COMMIT_SHA" ]]; then
+    die "checked out HEAD $ACTUAL_SHA does not match spec commit $BUILDBOX_COMMIT_SHA"
+  fi
+elif [[ "$SOURCE_REF" =~ ^[0-9a-fA-F]{40}$ && "$BUILDBOX_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  if [[ "$ACTUAL_SHA" != "$BUILDBOX_COMMIT_SHA" ]]; then
+    die "checked out HEAD $ACTUAL_SHA does not match spec commit $BUILDBOX_COMMIT_SHA"
+  fi
 fi
 
 "$SCRIPT_DIR/verify-compile-inputs"

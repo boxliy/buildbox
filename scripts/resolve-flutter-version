@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Prefer the checked-out waterfowl/.fvmrc Flutter pin, then the Build Spec.
+set -Eeuo pipefail
+set +x
+
+usage() {
+  printf 'usage: %s <source-root> <spec.json>\n' "${0##*/}" >&2
+}
+
+die() {
+  printf 'resolve-flutter-version: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ $# -eq 2 ]] || { usage; exit 64; }
+SOURCE_ROOT=$1
+SPEC_JSON=$2
+[[ -f "$SPEC_JSON" ]] || die "missing spec: $SPEC_JSON"
+command -v jq >/dev/null 2>&1 || die 'missing required command: jq'
+
+FVMRC="$SOURCE_ROOT/waterfowl/.fvmrc"
+if [[ -f "$FVMRC" ]]; then
+  FLUTTER_VERSION=$(jq -er '.flutter | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$FVMRC") \
+    || die 'waterfowl/.fvmrc flutter version is invalid'
+else
+  FLUTTER_VERSION=$(jq -er '.config.frozenInputs.flutterVersion | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$SPEC_JSON") \
+    || die 'spec flutterVersion is missing'
+fi
+
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  printf 'flutter_version=%s\n' "$FLUTTER_VERSION" >>"$GITHUB_OUTPUT"
+fi
+printf '%s\n' "$FLUTTER_VERSION"

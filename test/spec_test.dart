@@ -121,4 +121,45 @@ void main() {
       }
     },
   );
+
+  test('sourceRef releases frozen commit toolchain and resource pins', () {
+    final spec = nativeSpec();
+    spec['sourceRef'] = 'latest';
+    spec['frozenInputs']['sourceRef'] = 'latest';
+    spec['commitSha'] = 'latest';
+    spec['frozenInputs']['commitSha'] = 'latest';
+    (spec['frozenInputs'] as Map).remove('fvmrc');
+    spec['frozenInputs']['builtinResources'] = <Object?>[];
+    spec['frozenInputs']['languages'] = <Object?>[];
+    validateSpec(spec);
+
+    final tagged = nativeSpec();
+    tagged['sourceRef'] = 'v1.2.3';
+    tagged['frozenInputs']['sourceRef'] = 'v1.2.3';
+    tagged['commitSha'] = 'v1.2.3';
+    tagged['frozenInputs']['commitSha'] = 'v1.2.3';
+    (tagged['frozenInputs'] as Map).remove('fvmrc');
+    validateSpec(tagged);
+
+    final ios = nativeSpec();
+    ios['platform'] = 'ios';
+    ios['frozenInputs']['platform'] = 'ios';
+    ios['targets'] = ['ipa'];
+    ios['sourceRef'] = 'local';
+    ios['frozenInputs']['sourceRef'] = 'local';
+    ios['frozenInputs']['xcodeBuild'] = '';
+    (ios['frozenInputs'] as Map).remove('fvmrc');
+    for (final item in ios['assembly']['catalog']['presentations'] as List) {
+      (item['platforms'] as List).add('ios');
+    }
+    ios['assembly']['catalogDigest'] = hashJson(ios['assembly']['catalog']);
+    validateSpec(ios);
+
+    for (final ref in ['../main', '-latest', 'v1.2', 'feature/x']) {
+      final bad = nativeSpec();
+      bad['sourceRef'] = ref;
+      bad['frozenInputs']['sourceRef'] = ref;
+      expect(() => validateSpec(bad), throwsA(anything));
+    }
+  });
 }

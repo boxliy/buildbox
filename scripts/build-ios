@@ -8,9 +8,11 @@ source_root=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:?}/aviary-source}
 [[ -z "${HAWK_STAGE_TOKEN+x}" && -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN+x}" ]] || { echo 'compile runner must not carry stage credentials' >&2; exit 1; }
 "$script_dir/verify-compile-inputs"
 jq -e '.config.platform == "ios" and .config.targets == ["ipa"]' "$state/spec.json" >/dev/null
-expected_xcode=$(jq -er '.config.frozenInputs.xcodeBuild | select(type == "string" and length > 0)' "$state/spec.json")
-actual_xcode=$(xcodebuild -version | awk '/Build version/ {print $3}')
-[[ "$actual_xcode" == "$expected_xcode" ]] || { echo 'Xcode build mismatch' >&2; exit 1; }
+expected_xcode=$(jq -r '.config.frozenInputs.xcodeBuild // empty' "$state/spec.json")
+if [[ -n "$expected_xcode" ]]; then
+  actual_xcode=$(xcodebuild -version | awk '/Build version/ {print $3}')
+  [[ "$actual_xcode" == "$expected_xcode" ]] || { echo 'Xcode build mismatch' >&2; exit 1; }
+fi
 version=$(jq -er '.config.frozenInputs.versionName' "$state/spec.json")
 number=$(jq -er '.config.frozenInputs.buildNumber' "$state/spec.json")
 identifier=$(jq -er '.config.applicationIdentifier' "$state/spec.json")
