@@ -65,6 +65,7 @@ while IFS= read -r target; do
     CURL_ARGS+=(--header "${key}: ${value}")
   done < <(jq -r --arg target "$target" '.[] | select(.target == $target) | .headers | to_entries[] | [.key, .value] | @base64' "$BUILDBOX_UPLOADS_JSON")
 
+  BUILDBOX_CURL_TIMEOUT=${BUILDBOX_CURL_TIMEOUT:-300}
   curl_retry "${CURL_ARGS[@]}" --upload-file "$artifact_path" "$upload_url"
   printf 'Uploaded %s for run %s\n' "$target" "$BUILDBOX_RUN_ID"
 done < <(jq -r '.[]' "$BUILDBOX_TARGETS_JSON")
