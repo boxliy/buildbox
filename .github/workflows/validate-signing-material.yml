@@ -78,11 +78,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Exchange validation credential and run validator
+      - name: Exchange validation credential
         env:
           HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
         shell: bash
-        run: |
-          set -euo pipefail
-          scripts/signing_validation/exchange-validation
-          scripts/signing_validation/validate-material
+        run: scripts/signing_validation/exchange-validation
+
+      - name: Run signing validator
+        shell: bash
+        run: scripts/signing_validation/validate-material
