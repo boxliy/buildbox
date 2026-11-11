@@ -186,7 +186,41 @@ Future<String> tool(
   return result.stdout as String;
 }
 
-Future<dynamic> request(String path, [dynamic body]) async {
+bool isTransientTransportError(Object error) =>
+    error is HandshakeException ||
+    error is SocketException ||
+    error is TlsException ||
+    error is TimeoutException;
+
+Duration transientRetryDelay() {
+  final raw = Platform.environment['BUILDBOX_RETRY_DELAY'];
+  if (raw == null || raw.isEmpty) return const Duration(seconds: 2);
+  final seconds = int.tryParse(raw);
+  if (seconds == null || seconds < 0) return const Duration(seconds: 2);
+  return Duration(seconds: seconds);
+}
+
+Future<T> withTransientRetry<T>(
+  Future<T> Function() action, {
+  int attempts = 4,
+  Duration? delay,
+}) async {
+  final wait = delay ?? transientRetryDelay();
+  for (var attempt = 1; ; attempt++) {
+    try {
+      return await action();
+    } catch (error) {
+      if (!isTransientTransportError(error) || attempt >= attempts) rethrow;
+      if (wait > Duration.zero) await Future<void>.delayed(wait);
+    }
+  }
+}
+
+Future<dynamic> request(String path, [dynamic body]) {
+  return withTransientRetry(() => requestOnce(path, body));
+}
+
+Future<dynamic> requestOnce(String path, [dynamic body]) async {
   final base = (Platform.environment['HAWK_BASE_URL'] ?? '').replaceFirst(
     RegExp(r'/+$'),
     '',

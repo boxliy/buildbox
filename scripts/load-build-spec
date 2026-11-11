@@ -18,6 +18,8 @@ require_command() {
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/targets.sh
 source "$SCRIPT_DIR/lib/targets.sh"
+# shellcheck source=lib/curl_retry.sh
+source "$SCRIPT_DIR/lib/curl_retry.sh"
 
 json_get_required() {
   local filter=$1
@@ -64,7 +66,7 @@ else
   SPEC_URL="$BASE_URL/api/v1/buildbox/runs/$EXPECTED_RUN_ID/spec"
 fi
 
-curl --fail --silent --show-error \
+curl_retry --fail --silent --show-error \
   --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
   --header 'Accept: application/json' \
   --output "$SPEC_RESPONSE" \

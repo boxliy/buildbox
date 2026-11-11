@@ -34,10 +34,13 @@ esac
 
 require_command curl
 require_command jq
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/curl_retry.sh
+source "$SCRIPT_DIR/lib/curl_retry.sh"
 
 [[ "$HAWK_BASE_URL" == https://* ]] || die 'Hawk requires HTTPS'
 AUDIENCE=$(printf '%s' "${HAWK_OIDC_AUDIENCE:?HAWK_OIDC_AUDIENCE is required}" | jq -sRr @uri)
-OIDC_RESPONSE=$(curl --fail --silent --show-error \
+OIDC_RESPONSE=$(curl_retry --fail --silent --show-error \
   --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
   "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}")
 OIDC_TOKEN=$(printf '%s' "$OIDC_RESPONSE" | jq -er '.value | select(type == "string" and length > 0)') \
@@ -58,7 +61,7 @@ EXCHANGE_BODY=$(jq -nc \
   --arg stage "$STAGE" \
   --arg dispatchProof "$DISPATCH_PROOF" \
   '{oidcToken: $oidcToken, runId: $runId, stage: $stage, dispatchProof: $dispatchProof}')
-RESPONSE=$(curl --fail --silent --show-error \
+RESPONSE=$(curl_retry --fail --silent --show-error \
   --request POST \
   --header 'Content-Type: application/json' \
   --header 'Accept: application/json' \

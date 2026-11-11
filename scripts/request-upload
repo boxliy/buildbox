@@ -15,6 +15,8 @@ require_command() {
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/targets.sh
 source "$SCRIPT_DIR/lib/targets.sh"
+# shellcheck source=lib/curl_retry.sh
+source "$SCRIPT_DIR/lib/curl_retry.sh"
 
 [[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
 [[ -n "${HAWK_STAGE_TOKEN:-}" ]] || die 'HAWK_STAGE_TOKEN is required'
@@ -50,7 +52,7 @@ while IFS= read -r target; do
     --arg sha256 "$sha256" \
     --arg contentType "$(target_content_type "$target")" \
     '{target:$target,fileName:$fileName,contentType:$contentType,byteSize:$byteSize,sha256:$sha256}')
-  response=$(curl --fail --silent --show-error \
+  response=$(curl_retry --fail --silent --show-error \
     --request POST \
     --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
     --header 'Content-Type: application/json' \
