@@ -234,4 +234,27 @@ void main() {
       );
     });
   });
+
+  test(
+    'sourceRef mode ignores frozen commit catalog and lockfile pins',
+    () async {
+      await sourceFixture((checkout, path, spec) async {
+        final config = spec['config'] as Json;
+        config['sourceRef'] = 'latest';
+        (config['frozenInputs'] as Json)['sourceRef'] = 'latest';
+        final catalog = (config['assembly'] as Json)['catalog'] as Json;
+        catalog['lockfileDigest'] = 'sha256:${'ab' * 32}';
+        (config['assembly'] as Json)['catalogDigest'] = hashJson(catalog);
+        spec['specHash'] = specDigest(config);
+        writeJson(path, spec);
+        File(
+          '${checkout.path}/waterfowl/pubspec.lock',
+        ).writeAsStringSync('drift');
+        File(
+          '${checkout.path}/waterfowl/tools/swan_build/bin/export_catalog.dart',
+        ).writeAsStringSync('this is not a valid exporter');
+        await verifySourceCatalog(path, checkout.path);
+      });
+    },
+  );
 }

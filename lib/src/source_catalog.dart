@@ -16,6 +16,14 @@ Future<void> verifySourceCatalog(String specPath, String checkout) async {
     'rev-parse',
     'HEAD',
   ])).trim();
+  final sourceRef = readSourceRef(config, config['frozenInputs'] as Json);
+  if (sourceRef != null) {
+    require(
+      RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(commit),
+      'build checkout has no commit',
+    );
+    return;
+  }
   require(
     commit == config['commitSha'],
     'build checkout is not frozen source commit',

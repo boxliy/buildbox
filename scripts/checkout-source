@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Check out Aviary client source at a sourceRef and record the resolved commit.
+set -Eeuo pipefail
+set +x
+
+usage() {
+  printf 'usage: %s <checkout-dir> [source-ref]\n' "${0##*/}" >&2
+}
+
+die() {
+  printf 'checkout-source: %s\n' "$*" >&2
+  exit 1
+}
+
+valid_source_ref() {
+  local ref=$1
+  [[ "$ref" != -* ]] || return 1
+  [[ "$ref" != *..* ]] || return 1
+  [[ ! "$ref" =~ [[:space:][:cntrl:]] ]] || return 1
+  case "$ref" in
+    latest | main | local) return 0 ;;
+  esac
+  [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]] && return 0
+  [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && return 0
+  return 1
+}
+
+git_auth() {
+  if [[ -z "${BUILDBOX_SOURCE_TOKEN:-}" ]]; then
+    git "$@"
+    return
+  fi
+  local basic
+  basic="$(printf 'x-access-token:%s' "$BUILDBOX_SOURCE_TOKEN" | base64 | tr -d '\n')"
+  git -c "http.extraheader=AUTHORIZATION: basic ${basic}" "$@"
+}
+
+[[ $# -ge 1 && $# -le 2 ]] || { usage; exit 64; }
+CHECKOUT=$1
+SOURCE_REF=${2:-latest}
+valid_source_ref "$SOURCE_REF" || die "illegal sourceRef: $SOURCE_REF"
+
+if [[ "$SOURCE_REF" == local ]]; then
+  [[ -d "$CHECKOUT/.git" ]] || die "local source checkout is missing: $CHECKOUT"
+  RESOLVED_COMMIT=$(git -C "$CHECKOUT" rev-parse --verify HEAD)
+  [[ "$RESOLVED_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || die 'local source checkout has no commit'
+else
+  if [[ ! -d "$CHECKOUT/.git" ]]; then
+    [[ "${BUILDBOX_CHECKOUT_REPOSITORY:-}" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || die 'BUILDBOX_CHECKOUT_REPOSITORY must be owner/repo'
+    mkdir -p "$CHECKOUT"
+    git init --quiet "$CHECKOUT"
+    git -C "$CHECKOUT" remote add origin "https://github.com/${BUILDBOX_CHECKOUT_REPOSITORY}.git"
+  fi
+  git -C "$CHECKOUT" remote get-url origin >/dev/null 2>&1 || die 'source checkout has no origin'
+  git_auth -C "$CHECKOUT" fetch --tags --force origin '+refs/heads/main:refs/remotes/origin/main'
+
+  case "$SOURCE_REF" in
+    latest)
+      RESOLVED_REF=$(git -C "$CHECKOUT" tag --list 'v[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+      if [[ -z "$RESOLVED_REF" ]]; then
+        RESOLVED_REF=origin/main
+      fi
+      ;;
+    main)
+      RESOLVED_REF=origin/main
+      ;;
+    *)
+      if [[ "$SOURCE_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        git_auth -C "$CHECKOUT" fetch --force origin "refs/tags/${SOURCE_REF}:refs/tags/${SOURCE_REF}"
+      elif [[ "$SOURCE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        git_auth -C "$CHECKOUT" fetch --force origin "$SOURCE_REF" || true
+      fi
+      RESOLVED_REF=$SOURCE_REF
+      ;;
+  esac
+  git -C "$CHECKOUT" checkout --detach --quiet "$RESOLVED_REF"
+  RESOLVED_COMMIT=$(git -C "$CHECKOUT" rev-parse --verify HEAD)
+fi
+
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  {
+    printf 'source_ref=%s\n' "$SOURCE_REF"
+    printf 'resolved_commit=%s\n' "$RESOLVED_COMMIT"
+  } >>"$GITHUB_OUTPUT"
+fi
+printf '%s\n' "$RESOLVED_COMMIT"

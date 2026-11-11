@@ -7,6 +7,30 @@ void keys(Json value, Set<String> allowed, {bool exact = false}) => require(
   'unknown or missing field',
 );
 const shaPattern = r'sha256:[0-9a-f]{64}';
+bool validSourceRef(String value) =>
+    !value.startsWith('-') &&
+    !value.contains('..') &&
+    !RegExp(r'\s').hasMatch(value) &&
+    value.codeUnits.every((unit) => unit >= 32) &&
+    (value == 'latest' ||
+        value == 'main' ||
+        value == 'local' ||
+        RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(value) ||
+        RegExp(r'^v[0-9]+\.[0-9]+\.[0-9]+$').hasMatch(value));
+String? readSourceRef(Json config, Json frozen) {
+  final top = config['sourceRef'];
+  final nested = frozen['sourceRef'];
+  String? ref;
+  if (top is String && top.isNotEmpty) ref = top;
+  if (nested is String && nested.isNotEmpty) {
+    require(ref == null || ref == nested, 'frozen scope mismatch');
+    ref ??= nested;
+  }
+  if (top != null || nested != null)
+    require(ref != null && validSourceRef(ref), 'invalid sourceRef');
+  return ref;
+}
+
 List<String> features(dynamic value) {
   require(value is List, 'invalid features');
   final list = (value as List).cast<String>();
@@ -32,6 +56,7 @@ Json validateSpec(Json c) {
     'platform',
     'targets',
     'commitSha',
+    'sourceRef',
     'sourceRepo',
     'appProfile',
     'artifactPrefix',
@@ -103,6 +128,7 @@ Json validateSpec(Json c) {
     'platform',
     'sourceRepo',
     'commitSha',
+    'sourceRef',
     'flutterVersion',
     'fvmrc',
     'versionName',
@@ -123,11 +149,18 @@ Json validateSpec(Json c) {
   ]) {
     if (c.containsKey(key)) require(c[key] == f[key], 'frozen scope mismatch');
   }
+  final sourceRef = readSourceRef(c, f);
+  final commitSha = f['commitSha'];
   require(
-    matches(f['commitSha'], r'[0-9a-f]{40}') &&
-        f['buildNumber'] is int &&
+    f['buildNumber'] is int &&
         f['buildNumber'] >= 1 &&
-        f['buildNumber'] <= 2100000000,
+        f['buildNumber'] <= 2100000000 &&
+        (sourceRef == null
+            ? matches(commitSha, r'[0-9a-f]{40}')
+            : commitSha == null ||
+                  commitSha == '' ||
+                  commitSha == sourceRef ||
+                  matches(commitSha, r'[0-9a-fA-F]{40}')),
     'invalid frozen version or source',
   );
   for (final key in ['flutterVersion', 'versionName']) {
@@ -137,8 +170,10 @@ Json validateSpec(Json c) {
     );
   }
   if (platform == 'ios') {
+    final xcode = f['xcodeBuild'];
     require(
-      matches(f['xcodeBuild'], r'[A-Za-z0-9]{1,32}'),
+      sourceRef != null && (xcode == null || xcode == '') ||
+          matches(xcode, r'[A-Za-z0-9]{1,32}'),
       'missing fixed Xcode build',
     );
   } else {
@@ -149,13 +184,17 @@ Json validateSpec(Json c) {
       'iOS inputs on Android',
     );
   }
-  final resource = f['fvmrc'] as Json;
-  keys(resource, {'path', 'sha256'}, exact: true);
-  require(
-    resource['path'] == 'waterfowl/.fvmrc' &&
-        matches(resource['sha256'], r'[0-9a-f]{64}'),
-    'invalid fixed Flutter configuration',
-  );
+  if (f['fvmrc'] == null) {
+    require(sourceRef != null, 'invalid fixed Flutter configuration');
+  } else {
+    final resource = f['fvmrc'] as Json;
+    keys(resource, {'path', 'sha256'}, exact: true);
+    require(
+      resource['path'] == 'waterfowl/.fvmrc' &&
+          matches(resource['sha256'], r'[0-9a-f]{64}'),
+      'invalid fixed Flutter configuration',
+    );
+  }
   require(
     matches(f['signingReference'], r'signing:[A-Za-z0-9:._-]{1,120}'),
     'invalid signing reference',
@@ -174,6 +213,13 @@ Json validateSpec(Json c) {
     'invalid native component targets',
   );
   for (final group in ['brandAssets', 'builtinResources', 'languages']) {
+    if (f[group] == null) {
+      require(
+        sourceRef != null && group != 'brandAssets',
+        'invalid resource group',
+      );
+      continue;
+    }
     final values = f[group] as List;
     final paths = values.map((v) => v['path'] as String).toList();
     final sorted = paths.toSet().toList()..sort();
@@ -307,7 +353,8 @@ void validateNative(Json c) {
   }, exact: true);
   require(
     catalog['schemaVersion'] == 1 &&
-        catalog['sourceCommit'] == c['commitSha'] &&
+        (readSourceRef(c, c['frozenInputs'] as Json) != null ||
+            catalog['sourceCommit'] == c['commitSha']) &&
         catalog['flutterVersion'] == c['frozenInputs']['flutterVersion'] &&
         matches(catalog['lockfileDigest'], shaPattern),
     'native catalog source mismatch',

@@ -5,6 +5,10 @@ on:
       build_run_id:
         required: true
         type: string
+      tools_sha:
+        description: Delivered Buildbox tools revision
+        required: true
+        type: string
       platform:
         required: true
         type: string
@@ -35,7 +39,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: 9056c1d28c091402960831cb7ef22e338731824c
+          ref: ${{ inputs.tools_sha }}
           persist-credentials: false
 
       - name: Setup trusted Dart toolchain
