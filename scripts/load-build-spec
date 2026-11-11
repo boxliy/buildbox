@@ -80,15 +80,15 @@ SOURCE_REF=$(jq -r '.sourceRef // .config.sourceRef // .config.frozenInputs.sour
 COMMIT_SHA=$(jq -r '.commitSha // .config.commitSha // empty' "$SPEC_RESPONSE")
 valid_source_ref() {
   local ref=$1
-  [[ "$ref" != -* ]] || return 1
+  [[ -n "$ref" && ${#ref} -le 128 ]] || return 1
   [[ "$ref" != *..* ]] || return 1
+  [[ "$ref" != /* && "$ref" != */ ]] || return 1
+  [[ "$ref" != -* ]] || return 1
   [[ ! "$ref" =~ [[:space:][:cntrl:]] ]] || return 1
   case "$ref" in
     latest | main | local) return 0 ;;
   esac
-  [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]] && return 0
-  [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && return 0
-  return 1
+  [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]]
 }
 if [[ -z "$SOURCE_REF" ]]; then
   if [[ -n "$COMMIT_SHA" ]]; then

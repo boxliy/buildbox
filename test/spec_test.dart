@@ -141,6 +141,14 @@ void main() {
     (tagged['frozenInputs'] as Map).remove('fvmrc');
     validateSpec(tagged);
 
+    final branch = nativeSpec();
+    branch['sourceRef'] = 'release/v1.2.3';
+    branch['frozenInputs']['sourceRef'] = 'release/v1.2.3';
+    branch['commitSha'] = 'release/v1.2.3';
+    branch['frozenInputs']['commitSha'] = 'release/v1.2.3';
+    (branch['frozenInputs'] as Map).remove('fvmrc');
+    validateSpec(branch);
+
     final ios = nativeSpec();
     ios['platform'] = 'ios';
     ios['frozenInputs']['platform'] = 'ios';
@@ -155,7 +163,15 @@ void main() {
     ios['assembly']['catalogDigest'] = hashJson(ios['assembly']['catalog']);
     validateSpec(ios);
 
-    for (final ref in ['../main', '-latest', 'v1.2', 'feature/x']) {
+    for (final ref in [
+      '../main',
+      '-latest',
+      '/main',
+      'main/',
+      'a@b',
+      'a b',
+      'a' * 129,
+    ]) {
       final bad = nativeSpec();
       bad['sourceRef'] = ref;
       bad['frozenInputs']['sourceRef'] = ref;

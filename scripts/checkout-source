@@ -14,15 +14,15 @@ die() {
 
 valid_source_ref() {
   local ref=$1
-  [[ "$ref" != -* ]] || return 1
+  [[ -n "$ref" && ${#ref} -le 128 ]] || return 1
   [[ "$ref" != *..* ]] || return 1
+  [[ "$ref" != /* && "$ref" != */ ]] || return 1
+  [[ "$ref" != -* ]] || return 1
   [[ ! "$ref" =~ [[:space:][:cntrl:]] ]] || return 1
   case "$ref" in
     latest | main | local) return 0 ;;
   esac
-  [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]] && return 0
-  [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && return 0
-  return 1
+  [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]]
 }
 
 git_auth() {
@@ -65,12 +65,16 @@ else
       RESOLVED_REF=origin/main
       ;;
     *)
-      if [[ "$SOURCE_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        git_auth -C "$CHECKOUT" fetch --force origin "refs/tags/${SOURCE_REF}:refs/tags/${SOURCE_REF}"
-      elif [[ "$SOURCE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      if [[ "$SOURCE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
         git_auth -C "$CHECKOUT" fetch --force origin "$SOURCE_REF" || true
+        RESOLVED_REF=$SOURCE_REF
+      elif git_auth -C "$CHECKOUT" fetch --force origin "+refs/heads/${SOURCE_REF}:refs/remotes/origin/${SOURCE_REF}" >/dev/null 2>&1; then
+        RESOLVED_REF="origin/${SOURCE_REF}"
+      elif git_auth -C "$CHECKOUT" fetch --force origin "+refs/tags/${SOURCE_REF}:refs/tags/${SOURCE_REF}" >/dev/null 2>&1; then
+        RESOLVED_REF=$SOURCE_REF
+      else
+        die "sourceRef not found: $SOURCE_REF"
       fi
-      RESOLVED_REF=$SOURCE_REF
       ;;
   esac
   git -C "$CHECKOUT" checkout --detach --quiet "$RESOLVED_REF"
