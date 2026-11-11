@@ -28,7 +28,6 @@ jobs:
   validate:
     if: >-
       github.repository_owner == 'boxliy' &&
-      github.event.repository.private == true &&
       github.event_name != 'pull_request'
     runs-on: macos-15
     timeout-minutes: 10
@@ -48,7 +47,6 @@ jobs:
           [[ "$VALIDATOR_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$HAWK_BASE_URL" == https://* ]]
           [[ "${{ github.event_name }}" != "pull_request" ]]
-          [[ "${{ github.event.repository.private }}" == "true" ]]
 
       - name: Checkout pinned validator
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

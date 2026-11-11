@@ -25,14 +25,44 @@ valid_source_ref() {
   [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]]
 }
 
-git_auth() {
-  if [[ -z "${BUILDBOX_SOURCE_TOKEN:-}" ]]; then
+git_with_token() {
+  local token=$1
+  shift
+  if [[ -z "$token" ]]; then
     git "$@"
     return
   fi
   local basic
-  basic="$(printf 'x-access-token:%s' "$BUILDBOX_SOURCE_TOKEN" | base64 | tr -d '\n')"
+  basic="$(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')"
   git -c "http.extraheader=AUTHORIZATION: basic ${basic}" "$@"
+}
+
+# Aviary checkout uses the repository App token when prepare minted one.
+git_auth() {
+  if [[ -n "${SOURCE_REPO_TOKEN:-}" ]]; then
+    git_with_token "$SOURCE_REPO_TOKEN" "$@"
+  else
+    git_with_token "${BUILDBOX_SOURCE_TOKEN:-}" "$@"
+  fi
+}
+
+# The App token is scoped to Aviary. Retry the private nib mirror with the
+# fallback token instead of letting that narrower credential win permanently.
+clone_nib_mirror() {
+  local dest=$1
+  local url=https://github.com/boxliy/nib.git
+  local primary=${SOURCE_REPO_TOKEN:-${BUILDBOX_SOURCE_TOKEN:-}}
+  rm -rf "$dest"
+  mkdir -p "$(dirname "$dest")"
+  if git_with_token "$primary" clone --bare --quiet "$url" "$dest"; then
+    return 0
+  fi
+  rm -rf "$dest"
+  if [[ -n "${SOURCE_REPO_TOKEN:-}" && -n "${BUILDBOX_SOURCE_TOKEN:-}" && "$SOURCE_REPO_TOKEN" != "$BUILDBOX_SOURCE_TOKEN" ]]; then
+    git_with_token "$BUILDBOX_SOURCE_TOKEN" clone --bare --quiet "$url" "$dest"
+    return
+  fi
+  return 1
 }
 
 [[ $# -ge 1 && $# -le 2 ]] || { usage; exit 64; }
@@ -52,33 +82,47 @@ else
     git -C "$CHECKOUT" remote add origin "https://github.com/${BUILDBOX_CHECKOUT_REPOSITORY}.git"
   fi
   git -C "$CHECKOUT" remote get-url origin >/dev/null 2>&1 || die 'source checkout has no origin'
-  git_auth -C "$CHECKOUT" fetch --tags --force origin '+refs/heads/main:refs/remotes/origin/main'
 
   case "$SOURCE_REF" in
     latest)
-      RESOLVED_REF=$(git -C "$CHECKOUT" tag --list 'v[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
-      if [[ -z "$RESOLVED_REF" ]]; then
-        RESOLVED_REF=origin/main
+      git_auth -C "$CHECKOUT" fetch --filter=blob:none --tags --force origin
+      RESOLVED_TAG=$(git -C "$CHECKOUT" tag --list --sort=-version:refname | head -n 1 || true)
+      if [[ -n "$RESOLVED_TAG" ]]; then
+        git_auth -C "$CHECKOUT" checkout --detach --quiet "$RESOLVED_TAG"
+      else
+        git_auth -C "$CHECKOUT" fetch --filter=blob:none --force origin '+refs/heads/main:refs/remotes/origin/main'
+        git_auth -C "$CHECKOUT" checkout --detach --quiet refs/remotes/origin/main
       fi
       ;;
     main)
-      RESOLVED_REF=origin/main
+      git_auth -C "$CHECKOUT" fetch --filter=blob:none --force origin '+refs/heads/main:refs/remotes/origin/main'
+      git_auth -C "$CHECKOUT" checkout --detach --quiet refs/remotes/origin/main
       ;;
     *)
       if [[ "$SOURCE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
-        git_auth -C "$CHECKOUT" fetch --force origin "$SOURCE_REF" || true
-        RESOLVED_REF=$SOURCE_REF
-      elif git_auth -C "$CHECKOUT" fetch --force origin "+refs/heads/${SOURCE_REF}:refs/remotes/origin/${SOURCE_REF}" >/dev/null 2>&1; then
-        RESOLVED_REF="origin/${SOURCE_REF}"
-      elif git_auth -C "$CHECKOUT" fetch --force origin "+refs/tags/${SOURCE_REF}:refs/tags/${SOURCE_REF}" >/dev/null 2>&1; then
-        RESOLVED_REF=$SOURCE_REF
+        git_auth -C "$CHECKOUT" fetch --filter=blob:none --force origin "$SOURCE_REF" || die "sourceRef not found: $SOURCE_REF"
+        git_auth -C "$CHECKOUT" checkout --detach --quiet "$SOURCE_REF"
+        RESOLVED_COMMIT=$(git -C "$CHECKOUT" rev-parse --verify HEAD)
+        resolved_lc=$(printf '%s' "$RESOLVED_COMMIT" | tr 'A-F' 'a-f')
+        source_lc=$(printf '%s' "$SOURCE_REF" | tr 'A-F' 'a-f')
+        [[ "$resolved_lc" == "$source_lc" ]] || die 'source HEAD mismatch'
+      elif git_auth -C "$CHECKOUT" fetch --filter=blob:none --force origin "+refs/heads/${SOURCE_REF}:refs/remotes/origin/${SOURCE_REF}" >/dev/null 2>&1; then
+        git_auth -C "$CHECKOUT" checkout --detach --quiet "refs/remotes/origin/${SOURCE_REF}"
+      elif git_auth -C "$CHECKOUT" fetch --filter=blob:none --force origin "+refs/tags/${SOURCE_REF}:refs/tags/${SOURCE_REF}" >/dev/null 2>&1; then
+        git_auth -C "$CHECKOUT" checkout --detach --quiet "$SOURCE_REF"
       else
         die "sourceRef not found: $SOURCE_REF"
       fi
       ;;
   esac
-  git -C "$CHECKOUT" checkout --detach --quiet "$RESOLVED_REF"
-  RESOLVED_COMMIT=$(git -C "$CHECKOUT" rev-parse --verify HEAD)
+  if [[ -z "${RESOLVED_COMMIT:-}" ]]; then
+    RESOLVED_COMMIT=$(git -C "$CHECKOUT" rev-parse --verify HEAD)
+  fi
+  if [[ -f "$CHECKOUT/waterfowl/pubspec.lock" ]] &&
+    grep -F 'https://github.com/boxliy/nib.git' "$CHECKOUT/waterfowl/pubspec.lock" >/dev/null &&
+    [[ -n "${SOURCE_REPO_TOKEN:-}${BUILDBOX_SOURCE_TOKEN:-}" ]]; then
+    clone_nib_mirror "$CHECKOUT/.git/buildbox-mirrors/nib.git"
+  fi
 fi
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then

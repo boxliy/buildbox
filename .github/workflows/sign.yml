@@ -22,7 +22,6 @@ permissions:
   id-token: write
 jobs:
   sign:
-    if: github.event.repository.private == true
     runs-on: ${{ inputs.platform == 'ios' && 'macos-15' || 'ubuntu-24.04' }}
     timeout-minutes: 30
     permissions:

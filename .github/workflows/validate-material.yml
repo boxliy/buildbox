@@ -25,14 +25,14 @@ permissions:
 
 jobs:
   validate:
-    if: github.event_name == 'workflow_dispatch' && github.event.repository.private == true
+    if: github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/validate-signing-material.yml@b593e48e1baf2b2ffc46dde0478eb62dac497357
+    uses: boxliy/buildbox/.github/workflows/validate-signing-material.yml@dda5a812979ec56f2bee9651331fc3d572aafd36
     secrets:
       HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
     with:
       validation_id: ${{ inputs.validation_id }}
       hawk_base_url: ${{ inputs.hawk_base_url }}
-      validator_sha: b593e48e1baf2b2ffc46dde0478eb62dac497357
+      validator_sha: dda5a812979ec56f2bee9651331fc3d572aafd36

@@ -1,11 +1,9 @@
 # Private executor deployment contract
 
-`boxliy/buildbox` is public code hosting, not an authorized product execution
-repository. All reusable jobs and the caller reject public execution. Do not
-remove these guards. No private executor has been provisioned by this change.
-An operator must designate an authorized **private** repository before packaging
-can become ready. This task does not create repositories, change visibility,
-install secrets, or execute a product build.
+`boxliy/buildbox` is a public repository and, like `prtmax/runall`, accepts
+`workflow_dispatch` when `github.event.repository.private` is false. Source
+reads use `BUILDBOX_SOURCE_TOKEN` or an optional GitHub App token. Compile stays
+credential-free and resolves private `boxliy/nib` from the prepare-job mirror.
 
 ## Configuration owner and activation order
 

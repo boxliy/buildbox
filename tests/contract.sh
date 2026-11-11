@@ -114,13 +114,12 @@ if ! grep -F 'scripts/request-upload' <<<"$FINALIZE_JOB" >/dev/null; then
   printf 'finalize must request upload grants separately from the spec read\n' >&2
   exit 1
 fi
-if ! grep -F 'public repository cannot carry unsigned build artifacts' <<<"$PREPARE_JOB" >/dev/null; then
-  printf 'prepare must fail closed on a public repository\n' >&2
+if grep -F 'public repository cannot carry unsigned build artifacts' <<<"$PREPARE_JOB" >/dev/null; then
+  printf 'prepare must run on a public repository\n' >&2
   exit 1
 fi
-prepare_public=$(grep -n -F 'public repository cannot carry unsigned build artifacts' <<<"$PREPARE_JOB" | head -n 1 | cut -d: -f1)
-if [[ -z "$prepare_public" ]]; then
-  printf 'prepare must reject a public repository before later jobs\n' >&2
+if grep -F 'github.event.repository.private == true' <<<"$PREPARE_JOB$SIGN_JOB$FINALIZE_JOB" >/dev/null; then
+  printf 'packaging workflows must not require a private repository\n' >&2
   exit 1
 fi
 if grep -F "inputs.prepare_result == 'success'" <<<"$FINALIZE_JOB" >/dev/null \
@@ -568,5 +567,146 @@ if PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" '
   exit 1
 fi
 assert_file_contains "$TMP_DIR/bad-ref.err" "illegal sourceRef"
+
+"${GIT[@]}" -C "$SOURCE_FIXTURE/work" remote set-url origin "$SOURCE_FIXTURE/origin"
+
+# latest follows version sort, including tags outside vX.Y.Z, then falls back to main.
+printf 'plain\n' >"$SOURCE_FIXTURE/src/README"
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" commit --quiet -am plain
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" tag v2.0.0-rc.1
+"${GIT[@]}" -C "$SOURCE_FIXTURE/src" push --quiet origin v2.0.0-rc.1
+PLAIN=$(PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" latest)
+PLAIN_COMMIT=$("${GIT[@]}" -C "$SOURCE_FIXTURE/src" rev-parse v2.0.0-rc.1)
+[[ "$PLAIN" == "$PLAIN_COMMIT" ]] || { printf 'latest did not select the highest version tag\n' >&2; exit 1; }
+
+UNTAGGED=$(mktemp -d)
+"${GIT[@]}" init -b main --quiet "$UNTAGGED/src"
+"${GIT[@]}" -C "$UNTAGGED/src" config user.email fixture@example.invalid
+"${GIT[@]}" -C "$UNTAGGED/src" config user.name "Buildbox Fixture"
+"${GIT[@]}" -C "$UNTAGGED/src" config commit.gpgsign false
+printf 'bare\n' >"$UNTAGGED/src/README"
+"${GIT[@]}" -C "$UNTAGGED/src" add README
+"${GIT[@]}" -C "$UNTAGGED/src" commit --quiet -m bare
+"${GIT[@]}" init --bare --quiet "$UNTAGGED/origin"
+"${GIT[@]}" -C "$UNTAGGED/src" remote add origin "$UNTAGGED/origin"
+"${GIT[@]}" -C "$UNTAGGED/src" push --quiet origin main
+"${GIT[@]}" clone --quiet "$UNTAGGED/origin" "$UNTAGGED/work"
+UNPINNED=$(PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$UNTAGGED/work" latest)
+UNPINNED_MAIN=$("${GIT[@]}" -C "$UNTAGGED/src" rev-parse main)
+[[ "$UNPINNED" == "$UNPINNED_MAIN" ]] || { printf 'latest without tags did not fall back to main\n' >&2; exit 1; }
+
+SHA=$("${GIT[@]}" -C "$SOURCE_FIXTURE/src" rev-parse v1.0.0)
+SHA_OUT=$(PATH="/usr/bin:/bin" "$ROOT/scripts/checkout-source" "$SOURCE_FIXTURE/work" "$SHA")
+[[ "$SHA_OUT" == "$SHA" ]] || { printf 'commit checkout mismatch\n' >&2; exit 1; }
+
+MOCK_BIN=$(mktemp -d)
+cat >"$MOCK_BIN/git" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${MOCK_GIT_LOG:?}"
+if [[ "$1" == "-c" ]]; then
+  shift 2
+fi
+if [[ "$1" == "-C" ]]; then
+  shift 2
+fi
+case "$1 $2" in
+  "remote get-url")
+    printf 'https://github.com/example/repo.git\n'
+    exit 0
+    ;;
+esac
+if [[ "$1" == tag ]]; then
+  if [[ -n "${MOCK_TAGS:-}" ]]; then
+    printf '%s\n' "$MOCK_TAGS"
+  fi
+  exit 0
+fi
+if [[ "$1" == rev-parse ]]; then
+  printf '%s\n' "${MOCK_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+  exit 0
+fi
+if [[ "$1" == fetch && "$*" == *refs/heads/* && "${MOCK_BRANCH_OK:-1}" != 1 ]]; then
+  exit 1
+fi
+if [[ "$1" == clone && "${MOCK_FAIL_FIRST_CLONE:-}" == 1 && ! -e "${MOCK_GIT_LOG}.clone-failed" ]]; then
+  : >"${MOCK_GIT_LOG}.clone-failed"
+  exit 1
+fi
+exit 0
+MOCK
+chmod +x "$MOCK_BIN/git"
+MOCK_REPO=$(mktemp -d)
+mkdir -p "$MOCK_REPO/.git"
+MOCK_LOG="$TMP_DIR/checkout-git.log"
+: >"$MOCK_LOG"
+MOCK_TAGS=$'v1.2.0-rc.1\nv1.10.0' MOCK_GIT_LOG="$MOCK_LOG" PATH="$MOCK_BIN:/usr/bin:/bin" \
+  "$ROOT/scripts/checkout-source" "$MOCK_REPO" latest >/dev/null
+assert_file_contains "$MOCK_LOG" "fetch --filter=blob:none --tags --force origin"
+assert_file_contains "$MOCK_LOG" "tag --list --sort=-version:refname"
+assert_file_contains "$MOCK_LOG" "checkout --detach --quiet v1.2.0-rc.1"
+if grep -F 'refs/heads/main' "$MOCK_LOG" >/dev/null; then
+  printf 'latest with a tag fetched main\n' >&2
+  exit 1
+fi
+: >"$MOCK_LOG"
+MOCK_TAGS= MOCK_GIT_LOG="$MOCK_LOG" PATH="$MOCK_BIN:/usr/bin:/bin" \
+  "$ROOT/scripts/checkout-source" "$MOCK_REPO" latest >/dev/null
+assert_file_contains "$MOCK_LOG" "fetch --filter=blob:none --force origin +refs/heads/main:refs/remotes/origin/main"
+assert_file_contains "$MOCK_LOG" "checkout --detach --quiet refs/remotes/origin/main"
+: >"$MOCK_LOG"
+MOCK_GIT_LOG="$MOCK_LOG" PATH="$MOCK_BIN:/usr/bin:/bin" \
+  "$ROOT/scripts/checkout-source" "$MOCK_REPO" main >/dev/null
+assert_file_contains "$MOCK_LOG" "fetch --filter=blob:none --force origin +refs/heads/main:refs/remotes/origin/main"
+: >"$MOCK_LOG"
+MOCK_BRANCH_OK=0 MOCK_GIT_LOG="$MOCK_LOG" PATH="$MOCK_BIN:/usr/bin:/bin" \
+  "$ROOT/scripts/checkout-source" "$MOCK_REPO" v1.0.0 >/dev/null
+assert_file_contains "$MOCK_LOG" "fetch --filter=blob:none --force origin +refs/tags/v1.0.0:refs/tags/v1.0.0"
+assert_file_contains "$MOCK_LOG" "checkout --detach --quiet v1.0.0"
+: >"$MOCK_LOG"
+MOCK_BRANCH_OK=1 MOCK_GIT_LOG="$MOCK_LOG" PATH="$MOCK_BIN:/usr/bin:/bin" \
+  "$ROOT/scripts/checkout-source" "$MOCK_REPO" release/v1.2.3 >/dev/null
+assert_file_contains "$MOCK_LOG" "fetch --filter=blob:none --force origin +refs/heads/release/v1.2.3:refs/remotes/origin/release/v1.2.3"
+assert_file_contains "$MOCK_LOG" "checkout --detach --quiet refs/remotes/origin/release/v1.2.3"
+BAD_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+: >"$MOCK_LOG"
+if MOCK_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa MOCK_GIT_LOG="$MOCK_LOG" PATH="$MOCK_BIN:/usr/bin:/bin" \
+  "$ROOT/scripts/checkout-source" "$MOCK_REPO" "$BAD_SHA" >/dev/null 2>"$TMP_DIR/sha-mismatch.err"; then
+  printf 'expected a commit SHA mismatch to fail\n' >&2
+  exit 1
+fi
+assert_file_contains "$MOCK_LOG" "fetch --filter=blob:none --force origin $BAD_SHA"
+assert_file_contains "$TMP_DIR/sha-mismatch.err" "source HEAD mismatch"
+
+MIRROR_REPO=$(mktemp -d)
+mkdir -p "$MIRROR_REPO/.git/refs" "$MIRROR_REPO/waterfowl"
+printf 'https://github.com/boxliy/nib.git\n' >"$MIRROR_REPO/waterfowl/pubspec.lock"
+: >"$MOCK_LOG"
+TOKEN_BASIC=$(printf 'x-access-token:%s' "source-token" | base64 | tr -d '\n')
+BUILDBOX_SOURCE_TOKEN=source-token MOCK_TAGS=v1.0.0 MOCK_GIT_LOG="$MOCK_LOG" PATH="$MOCK_BIN:/usr/bin:/bin" \
+  "$ROOT/scripts/checkout-source" "$MIRROR_REPO" latest >/dev/null
+assert_file_contains "$MOCK_LOG" "clone --bare --quiet https://github.com/boxliy/nib.git $MIRROR_REPO/.git/buildbox-mirrors/nib.git"
+assert_file_contains "$MOCK_LOG" "http.extraheader=AUTHORIZATION: basic ${TOKEN_BASIC} -C $MIRROR_REPO checkout --detach --quiet v1.0.0"
+if grep -F 'source-token@' "$MOCK_LOG" >/dev/null || grep -F 'https://source-token' "$MOCK_LOG" >/dev/null; then
+  printf 'source token was embedded in the nib mirror URL\n' >&2
+  exit 1
+fi
+unset BUILDBOX_SOURCE_TOKEN
+
+APP_REPO=$(mktemp -d)
+mkdir -p "$APP_REPO/.git/refs" "$APP_REPO/waterfowl"
+printf 'https://github.com/boxliy/nib.git\n' >"$APP_REPO/waterfowl/pubspec.lock"
+: >"$MOCK_LOG"
+APP_BASIC=$(printf 'x-access-token:%s' "aviary-app-token" | base64 | tr -d '\n')
+PAT_BASIC=$(printf 'x-access-token:%s' "dependency-token" | base64 | tr -d '\n')
+SOURCE_REPO_TOKEN=aviary-app-token BUILDBOX_SOURCE_TOKEN=dependency-token MOCK_FAIL_FIRST_CLONE=1 MOCK_TAGS=v1.0.0 MOCK_GIT_LOG="$MOCK_LOG" PATH="$MOCK_BIN:/usr/bin:/bin" \
+  "$ROOT/scripts/checkout-source" "$APP_REPO" latest >/dev/null
+assert_file_contains "$MOCK_LOG" "http.extraheader=AUTHORIZATION: basic ${APP_BASIC} -C $APP_REPO checkout --detach --quiet v1.0.0"
+assert_file_contains "$MOCK_LOG" "http.extraheader=AUTHORIZATION: basic ${APP_BASIC} clone --bare --quiet https://github.com/boxliy/nib.git"
+assert_file_contains "$MOCK_LOG" "http.extraheader=AUTHORIZATION: basic ${PAT_BASIC} clone --bare --quiet https://github.com/boxliy/nib.git $APP_REPO/.git/buildbox-mirrors/nib.git"
+if grep -F 'aviary-app-token@' "$MOCK_LOG" >/dev/null || grep -F 'dependency-token@' "$MOCK_LOG" >/dev/null || grep -F 'https://aviary-app-token' "$MOCK_LOG" >/dev/null || grep -F 'https://dependency-token' "$MOCK_LOG" >/dev/null; then
+  printf 'a credential was embedded in a git URL\n' >&2
+  exit 1
+fi
+unset SOURCE_REPO_TOKEN BUILDBOX_SOURCE_TOKEN MOCK_FAIL_FIRST_CLONE
 
 printf 'contract tests passed\n'

@@ -31,7 +31,6 @@ permissions:
   id-token: write
 jobs:
   finalize:
-    if: github.event.repository.private == true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

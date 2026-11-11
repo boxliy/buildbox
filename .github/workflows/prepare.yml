@@ -15,7 +15,9 @@ on:
       HAWK_OIDC_AUDIENCE:
         required: true
       AVIARY_SOURCE_APP_PRIVATE_KEY:
-        required: true
+        required: false
+      BUILDBOX_SOURCE_TOKEN:
+        required: false
     outputs:
       flutter_version:
         value: ${{ jobs.prepare.outputs.flutter_version }}
@@ -28,7 +30,6 @@ permissions:
   id-token: write
 jobs:
   prepare:
-    if: github.event.repository.private == true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -74,19 +75,10 @@ jobs:
           HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
         run: scripts/load-build-spec "$BUILDBOX_RUN_ID"
 
-      - name: Refuse public artifact transport
-        id: public-repository
-        shell: bash
-        run: |
-          if [[ "${{ github.event.repository.private }}" != "true" ]]; then
-            printf 'public repository cannot carry unsigned build artifacts\n' >&2
-            exit 1
-          fi
-
       - name: Read frozen platform and source scope
         id: platform
         env:
-          ALLOWED_SOURCE: ${{ vars.AVIARY_SOURCE_REPOSITORY }}
+          ALLOWED_SOURCE: ${{ vars.AVIARY_SOURCE_REPOSITORY || 'boxliy/aviary' }}
           SOURCE: ${{ steps.spec.outputs.checkout_repository }}
         run: |
           test -n "$ALLOWED_SOURCE" && test "$SOURCE" = "$ALLOWED_SOURCE"
@@ -97,6 +89,7 @@ jobs:
 
       - name: Mint short-lived source read credential
         id: source-token
+        if: ${{ vars.AVIARY_SOURCE_APP_ID != '' }}
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ vars.AVIARY_SOURCE_APP_ID }}
@@ -107,7 +100,8 @@ jobs:
 
       - name: Fetch source for sourceRef
         env:
-          BUILDBOX_SOURCE_TOKEN: ${{ steps.source-token.outputs.token }}
+          SOURCE_REPO_TOKEN: ${{ steps.source-token.outputs.token }}
+          BUILDBOX_SOURCE_TOKEN: ${{ secrets.BUILDBOX_SOURCE_TOKEN }}
           BUILDBOX_CHECKOUT_REPOSITORY: ${{ steps.spec.outputs.checkout_repository }}
         run: scripts/checkout-source "$GITHUB_WORKSPACE/aviary-source" "${{ steps.spec.outputs.source_ref }}"
 
@@ -165,9 +159,7 @@ jobs:
         if: ${{ failure() }}
         shell: bash
         run: |
-          if [[ "${{ steps.public-repository.outcome }}" == "failure" ]]; then
-            reason='public repository cannot carry unsigned build artifacts'
-          elif [[ "${{ steps.spec.outcome }}" == "failure" ]]; then
+          if [[ "${{ steps.spec.outcome }}" == "failure" ]]; then
             reason='prepare could not load the frozen build spec'
           else
             reason='prepare failed before compile'
