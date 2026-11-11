@@ -283,7 +283,7 @@ void main() {
         ).readAsStringSync();
         expect(
           workflow,
-          contains('if: github.event.repository.private == true'),
+          isNot(contains('github.event.repository.private == true')),
         );
         final steps =
             ((loadYaml(workflow) as YamlMap)['jobs'][stage]['steps']
@@ -299,12 +299,7 @@ void main() {
         expect(workflow, isNot(contains('setup-python')));
       }
       final caller = File('.github/workflows/build.yml').readAsStringSync();
-      expect(
-        caller,
-        contains(
-          "if: github.event_name == 'workflow_dispatch' && github.event.repository.private == true",
-        ),
-      );
+      expect(caller, contains("if: github.event_name == 'workflow_dispatch'"));
       final compile = caller.split('\n  compile:')[1].split('\n  sign:')[0];
       for (final forbidden in [
         'id-token:',

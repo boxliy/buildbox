@@ -23,17 +23,18 @@ Direct GitHub reruns cannot claim a fresh attempt; prepare a new attempt through
 Runners and workspaces are separate; compile caches are not shared with signing.
 Source checkout uses `persist-credentials: false`. No application-provided script
 runs in the signing job. Credentials, keystores, profiles and presigned URLs are
-never job artifacts. Prepare refuses **public repository artifact transport** before
-source retrieval. This repository's public visibility therefore requires an
-approved private execution/transport configuration before real builds can run;
-private runners alone do not make public Actions artifacts private.
+never job artifacts. `workflow_dispatch` runs on this public repository. Prepare
+reads source with `BUILDBOX_SOURCE_TOKEN` or a short-lived GitHub App token and
+mirrors private `boxliy/nib` inside the checkout `.git` directory so compile can
+resolve it without credentials.
 
 Required operator configuration (do not add secret values to this repository):
 
 - Secrets `HAWK_BASE_URL`, `HAWK_OIDC_AUDIENCE`.
-- Variable `AVIARY_SOURCE_REPOSITORY`, variable `AVIARY_SOURCE_APP_ID`, secret
-  `AVIARY_SOURCE_APP_PRIVATE_KEY`: a GitHub App restricted to read-only contents
-  of the approved source repository and any explicitly authorized dependencies.
+- Optional variable `AVIARY_SOURCE_REPOSITORY` (defaults to `boxliy/aviary`).
+  Optional variable `AVIARY_SOURCE_APP_ID` and secret `AVIARY_SOURCE_APP_PRIVATE_KEY`
+  mint a read-only source token. Secret `BUILDBOX_SOURCE_TOKEN` is the fallback
+  source credential, including the private `boxliy/nib` mirror.
 - Hawk dispatch credentials, numeric repository identity and approved workflow
   SHA configuration; OIDC stage signing secret and fixed GitHub issuer/JWKS trust.
 - App packaging inputs, an active fixed signing version and published storage

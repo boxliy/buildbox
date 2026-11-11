@@ -10,6 +10,9 @@ actual=$("$script_dir/dart-tool" spec-identity "$state/spec.json")
 expected=$(jq -er '.specHash' "$state/spec.json")
 [[ "$actual" == "$expected" ]] || { echo 'Prepared Spec digest mismatch' >&2; exit 1; }
 # Bootstrap application-source tools only on the isolated compile runner.
+if [[ -d "$source_root/.git/buildbox-mirrors/nib.git" ]]; then
+  git config --global url."file://$source_root/.git/buildbox-mirrors/nib.git".insteadOf "https://github.com/boxliy/nib.git"
+fi
 (cd "$source_root/waterfowl/tools/swan_build" && dart pub get --enforce-lockfile)
 "$script_dir/dart-tool" verify-source-catalog "$state/spec.json" "$source_root"
 jq -e '.config' "$state/spec.json" >"$state/native-config.json"

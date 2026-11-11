@@ -131,7 +131,11 @@ void main() {
     (spec['frozenInputs'] as Map).remove('fvmrc');
     spec['frozenInputs']['builtinResources'] = <Object?>[];
     spec['frozenInputs']['languages'] = <Object?>[];
+    spec['frozenInputs']['fvmrc'] = {'path': 'waterfowl/.fvmrc', 'sha256': ''};
     validateSpec(spec);
+    final withoutRef = nativeSpec();
+    withoutRef['frozenInputs']['fvmrc']['sha256'] = '';
+    expect(() => validateSpec(withoutRef), throwsA(anything));
 
     final tagged = nativeSpec();
     tagged['sourceRef'] = 'v1.2.3';

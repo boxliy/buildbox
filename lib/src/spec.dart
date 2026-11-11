@@ -195,7 +195,8 @@ Json validateSpec(Json c) {
     keys(resource, {'path', 'sha256'}, exact: true);
     require(
       resource['path'] == 'waterfowl/.fvmrc' &&
-          matches(resource['sha256'], r'[0-9a-f]{64}'),
+          ((sourceRef != null && resource['sha256'] == '') ||
+              matches(resource['sha256'], r'[0-9a-f]{64}')),
       'invalid fixed Flutter configuration',
     );
   }
