@@ -34,6 +34,9 @@ esac
 
 require_command curl
 require_command jq
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/curl_retry.sh
+source "$SCRIPT_DIR/lib/curl_retry.sh"
 
 STATE_DIR=${BUILDBOX_STATE_DIR:-${RUNNER_TEMP:-/tmp}/buildbox}
 mkdir -p "$STATE_DIR"
@@ -108,7 +111,7 @@ else
     '{status: $status, githubRunId: $githubRunId, artifacts: []}' >"$PAYLOAD"
 fi
 
-curl --fail --silent --show-error \
+curl_retry --fail --silent --show-error \
   --request POST \
   --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
   --header 'Content-Type: application/json' \

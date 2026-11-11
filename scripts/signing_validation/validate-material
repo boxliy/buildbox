@@ -25,6 +25,9 @@ require_command() {
 require_command curl
 require_command jq
 require_command dart
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=../lib/curl_retry.sh
+source "$SCRIPT_DIR/../lib/curl_retry.sh"
 
 TOOL=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/dart-tool
 BASE_URL=${HAWK_BASE_URL%/}
@@ -41,7 +44,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-curl --fail --silent --show-error \
+curl_retry --fail --silent --show-error \
   --header "Authorization: Bearer $HAWK_VALIDATION_TOKEN" \
   --header 'Accept: application/json' \
   --output "$ENVELOPE" \
@@ -64,7 +67,7 @@ fi
 "$TOOL" validation-result "$ENVELOPE" "$RESULT" "$HAWK_RESULT"
 chmod 600 "$HAWK_RESULT"
 
-curl --fail --silent --show-error \
+curl_retry --fail --silent --show-error \
   --request POST \
   --header "Authorization: Bearer $HAWK_VALIDATION_TOKEN" \
   --header 'Content-Type: application/json' \
