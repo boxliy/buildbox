@@ -125,6 +125,8 @@ case "$method:$url" in
   PUT:https://oss.example/*)
     [[ "${MOCK_UPLOAD_FAIL:-0}" != 1 ]] || exit 22
     ;;
+  POST:*'/api/v1/buildbox/runs/'*'/prepare-complete')
+    ;;
   POST:*'/api/v1/buildbox/runs/'*'/callback')
     # Hawk records GitHub callbacks only for a finalize stage credential.
     [[ "$authorization" == "Bearer stage-finalize-"* || "$authorization" == "Bearer bb1."* ]] || exit 1

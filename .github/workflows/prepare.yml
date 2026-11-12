@@ -40,6 +40,10 @@ on:
         value: ${{ jobs.prepare.outputs.ios_matrix }}
       requested_matrix:
         value: ${{ jobs.prepare.outputs.requested_matrix }}
+      has_failed:
+        value: ${{ jobs.prepare.outputs.has_failed }}
+      failed_matrix:
+        value: ${{ jobs.prepare.outputs.failed_matrix }}
 permissions:
   contents: read
   id-token: write
@@ -61,6 +65,8 @@ jobs:
       android_matrix: ${{ steps.matrix.outputs.android_matrix }}
       ios_matrix: ${{ steps.matrix.outputs.ios_matrix }}
       requested_matrix: ${{ steps.matrix.outputs.requested_matrix }}
+      has_failed: ${{ steps.matrix.outputs.has_failed }}
+      failed_matrix: ${{ steps.matrix.outputs.failed_matrix }}
     env:
       BUILDBOX_RUN_ID: ${{ inputs.build_run_id }}
       BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}

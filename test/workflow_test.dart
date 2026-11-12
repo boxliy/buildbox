@@ -314,6 +314,62 @@ void main() {
       expect(compile, contains('persist-credentials: false'));
     },
   );
+  test('failed chunk members finalize outside prepare', () {
+    final caller =
+        loadYaml(File('.github/workflows/build.yml').readAsStringSync())
+            as YamlMap;
+    final jobs = caller['jobs'] as YamlMap;
+    final order = (jobs.keys.map((key) => key.toString())).toList();
+    expect(
+      order,
+      containsAllInOrder([
+        'chunk',
+        'prepare',
+        'compile',
+        'compile-ios',
+        'sign',
+        'sign-ios',
+        'finalize',
+        'finalize-failed',
+        'finalize-ios',
+        'finalize-prepare',
+      ]),
+    );
+    final failed = jobs['finalize-failed'] as YamlMap;
+    expect(failed['strategy']['fail-fast'], isFalse);
+    expect(failed['with']['build_run_id'], r'${{ matrix.item.build_run_id }}');
+    expect(failed['with']['prepare_result'], 'failure');
+    expect(failed['with']['compile_result'], 'skipped');
+    expect(failed['with']['sign_result'], 'skipped');
+    expect(failed['with']['failure_reason'], 'prepare failed before compile');
+    expect(failed['uses'], contains('/finalize.yml@'));
+    expect(
+      failed['strategy']['matrix']['item'],
+      contains('needs.prepare.outputs.failed_matrix'),
+    );
+    final prepareFailure = jobs['finalize-prepare'] as YamlMap;
+    expect(prepareFailure['strategy']['fail-fast'], isFalse);
+    expect(
+      prepareFailure['with']['build_run_id'],
+      r'${{ matrix.item.build_run_id }}',
+    );
+    expect(
+      prepareFailure['strategy']['matrix']['item'],
+      contains('needs.chunk.outputs.requested_matrix'),
+    );
+    expect(prepareFailure['needs'], containsAll(['prepare', 'chunk']));
+    expect(
+      prepareFailure['with']['prepare_result'],
+      r'${{ needs.prepare.result }}',
+    );
+    final prepareWorkflow = File(
+      '.github/workflows/prepare.yml',
+    ).readAsStringSync();
+    expect(prepareWorkflow, isNot(contains('exchange-stage finalize')));
+    expect(prepareWorkflow, isNot(contains('scripts/report-result')));
+    expect(prepareWorkflow, contains('failed_matrix:'));
+  });
+
   test('validation credential exchange is its own step', () {
     final workflow =
         loadYaml(

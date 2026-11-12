@@ -709,4 +709,80 @@ if grep -F 'aviary-app-token@' "$MOCK_LOG" >/dev/null || grep -F 'dependency-tok
 fi
 unset SOURCE_REPO_TOKEN BUILDBOX_SOURCE_TOKEN MOCK_FAIL_FIRST_CLONE
 
+
+# A failed chunk member must not borrow the primary run's state or a prepare-job finalize credential.
+CHUNK_ROOT=$(mktemp -d)
+CHUNK_PRIMARY="$CHUNK_ROOT/runner/buildbox/401"
+CHUNK_ENV="$CHUNK_ROOT/github-env"
+CHUNK_OUT="$CHUNK_ROOT/github-output"
+CHUNK_CURL="$CHUNK_ROOT/curl.log"
+mkdir -p "$CHUNK_PRIMARY" "$CHUNK_ROOT/workspace/aviary-source"
+cp -a "$GITHUB_WORKSPACE/aviary-source/." "$CHUNK_ROOT/workspace/aviary-source/"
+printf 'BUILDBOX_STATE_DIR=%s\nBUILDBOX_RUN_ID=401\n' "$CHUNK_PRIMARY" >"$CHUNK_ENV"
+CHUNK_CURL_LOG="$CHUNK_CURL" \
+  BUILDBOX_STATE_DIR="$CHUNK_PRIMARY" \
+  GITHUB_ENV="$CHUNK_ENV" \
+  GITHUB_OUTPUT="$CHUNK_ROOT/load-output" \
+  GITHUB_WORKSPACE="$CHUNK_ROOT/workspace" \
+  RUNNER_TEMP="$CHUNK_ROOT/runner" \
+  BUILDBOX_RUN_ID=401 \
+  "$ROOT/scripts/exchange-stage" prepare >/dev/null
+set -a
+# shellcheck disable=SC1090
+source "$CHUNK_ENV"
+set +a
+BUILDBOX_STATE_DIR="$CHUNK_PRIMARY" GITHUB_ENV="$CHUNK_ENV" GITHUB_OUTPUT="$CHUNK_ROOT/load-output" \
+  BUILDBOX_RUN_ID=401 "$ROOT/scripts/load-build-spec" 401 >/dev/null
+cp "$CHUNK_PRIMARY/spec.env" "$CHUNK_ROOT/primary-spec.env"
+cp "$CHUNK_PRIMARY/spec.json" "$CHUNK_ROOT/primary-spec.json"
+: >"$CHUNK_CURL"
+CHUNK_CURL_LOG="$CHUNK_CURL" \
+  BUILDBOX_STATE_DIR="$CHUNK_PRIMARY" \
+  GITHUB_ENV="$CHUNK_ENV" \
+  GITHUB_OUTPUT="$CHUNK_OUT" \
+  GITHUB_WORKSPACE="$CHUNK_ROOT/workspace" \
+  RUNNER_TEMP="$CHUNK_ROOT/runner" \
+  CURL_LOG="$CHUNK_CURL" \
+  ALLOWED_SOURCE=boxliy/aviary \
+  BUILD_RUN_IDS='401,402' \
+  BUILDBOX_RUN_ID=401 \
+  "$ROOT/scripts/prepare-chunk" >"$CHUNK_ROOT/prepare.out" 2>"$CHUNK_ROOT/prepare.err"
+cmp -s "$CHUNK_PRIMARY/spec.env" "$CHUNK_ROOT/primary-spec.env"
+cmp -s "$CHUNK_PRIMARY/spec.json" "$CHUNK_ROOT/primary-spec.json"
+assert_file_contains "$CHUNK_OUT" 'failed_matrix=[{"build_run_id":"402"}]'
+assert_file_contains "$CHUNK_OUT" 'has_failed=true'
+assert_file_contains "$CHUNK_OUT" 'android_matrix=[{"build_run_id":"401","flutter_version":"3.47.4"}]'
+assert_file_not_contains "$CHUNK_CURL" '/runs/401/callback'
+assert_file_not_contains "$CHUNK_CURL" '/runs/402/callback'
+exchanges=$(grep -c '/api/v1/buildbox/auth/exchange' "$CHUNK_CURL")
+[[ "$exchanges" -eq 1 ]] || {
+  printf 'failed member exchanged %s credentials; expected one prepare exchange\n' "$exchanges" >&2
+  exit 1
+}
+if [[ -e "$ROOT/scripts/report-chunk-failure" ]]; then
+  printf 'prepare must not keep a finalize credential helper\n' >&2
+  exit 1
+fi
+if grep -F 'exchange-stage finalize' "$ROOT/scripts/prepare-chunk" "$ROOT/.github/workflows/prepare.yml" >/dev/null; then
+  printf 'prepare must not exchange a finalize credential\n' >&2
+  exit 1
+fi
+REQ_OUT="$CHUNK_ROOT/requested-output"
+BUILD_RUN_IDS='401, 402' BUILDBOX_RUN_ID=401 GITHUB_OUTPUT="$REQ_OUT" "$ROOT/scripts/requested-runs"
+assert_file_contains "$REQ_OUT" 'requested_matrix=[{"build_run_id":"401"},{"build_run_id":"402"}]'
+if BUILD_RUN_IDS='402,401' BUILDBOX_RUN_ID=401 GITHUB_OUTPUT="$CHUNK_ROOT/bad-order" "$ROOT/scripts/requested-runs" >/dev/null 2>"$CHUNK_ROOT/bad-order.err"; then
+  printf 'expected the first chunk run to match build_run_id\n' >&2
+  exit 1
+fi
+assert_file_contains "$CHUNK_ROOT/bad-order.err" 'the first chunk run must be the dispatched build_run_id'
+MANY=401
+for ((i = 2; i <= 21; i++)); do
+  MANY="$MANY,$i"
+done
+if BUILD_RUN_IDS="$MANY" BUILDBOX_RUN_ID=401 GITHUB_OUTPUT="$CHUNK_ROOT/too-many" "$ROOT/scripts/requested-runs" >/dev/null 2>"$CHUNK_ROOT/too-many.err"; then
+  printf 'expected a 21-run chunk to be rejected\n' >&2
+  exit 1
+fi
+assert_file_contains "$CHUNK_ROOT/too-many.err" 'a chunk can contain at most 20 runs'
+
 printf 'contract tests passed\n'

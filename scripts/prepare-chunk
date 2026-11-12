@@ -21,22 +21,10 @@ die() {
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/curl_retry.sh
 source "$SCRIPT_DIR/lib/curl_retry.sh"
-
-ids=()
-if [[ -n "${BUILD_RUN_IDS:-}" ]]; then
-  IFS=',' read -r -a raw_ids <<<"$BUILD_RUN_IDS"
-  for raw in "${raw_ids[@]}"; do
-    id=${raw//[[:space:]]/}
-    [[ -n "$id" ]] || continue
-    [[ "$id" =~ ^[0-9]+$ ]] || die "illegal run id: $id"
-    ids+=("$id")
-  done
-else
-  ids=("$BUILDBOX_RUN_ID")
-fi
-[[ ${#ids[@]} -ge 1 ]] || die 'missing run id'
-[[ ${#ids[@]} -le 20 ]] || die 'a chunk can contain at most 20 runs'
-[[ "${ids[0]}" == "$BUILDBOX_RUN_ID" ]] || die 'the first chunk run must be the dispatched build_run_id'
+# shellcheck source=lib/chunk_ids.sh
+source "$SCRIPT_DIR/lib/chunk_ids.sh"
+chunk_ids
+ids=("${CHUNK_IDS[@]}")
 
 PRIMARY_STATE="$RUNNER_TEMP/buildbox/$BUILDBOX_RUN_ID"
 [[ -f "$PRIMARY_STATE/spec.env" ]] || die 'primary build spec was not loaded'
@@ -54,6 +42,7 @@ mkdir -p "$COMPILE_ROOT" "$SIGN_ROOT"
 REQUESTED_MATRIX='[]'
 ANDROID_MATRIX='[]'
 IOS_MATRIX='[]'
+FAILED_MATRIX='[]'
 MULTIPLE=0
 [[ ${#ids[@]} -gt 1 ]] && MULTIPLE=1
 FAILURES=0
@@ -63,13 +52,18 @@ prepare_one() {
   local state="$RUNNER_TEMP/buildbox/$id"
   local platform version base
   mkdir -p "$state" || return 1
+  export BUILDBOX_RUN_ID=$id
+  export BUILDBOX_STATE_DIR=$state
   if [[ ! -f "$state/spec.json" ]]; then
-    BUILDBOX_RUN_ID=$id BUILDBOX_STATE_DIR=$state "$SCRIPT_DIR/exchange-stage" prepare || return 1
+    "$SCRIPT_DIR/exchange-stage" prepare || return 1
     # shellcheck disable=SC1090
     set -a
     source "$GITHUB_ENV" || return 1
     set +a
-    BUILDBOX_RUN_ID=$id BUILDBOX_STATE_DIR=$state "$SCRIPT_DIR/load-build-spec" "$id" || return 1
+    # GITHUB_ENV carries the primary state directory. Restore the member before load.
+    export BUILDBOX_RUN_ID=$id
+    export BUILDBOX_STATE_DIR=$state
+    "$SCRIPT_DIR/load-build-spec" "$id" || return 1
   fi
   export BUILDBOX_RUN_ID=$id
   export BUILDBOX_STATE_DIR=$state
@@ -97,8 +91,9 @@ for id in "${ids[@]}"; do
   REQUESTED_MATRIX=$(jq -c --arg id "$id" '. + [{build_run_id:$id}]' <<<"$REQUESTED_MATRIX")
   if ! prepare_one "$id"; then
     FAILURES=$((FAILURES + 1))
+    FAILED_MATRIX=$(jq -c --arg id "$id" '. + [{build_run_id:$id}]' <<<"$FAILED_MATRIX")
+    # A sibling failure is finalized by finalize.yml. Prepare must not mint that credential.
     if [[ "$MULTIPLE" -eq 1 ]]; then
-      "$SCRIPT_DIR/report-chunk-failure" "$id" || true
       continue
     fi
     die "prepare failed for run $id"
@@ -111,12 +106,16 @@ fi
 
 has_android=false
 has_ios=false
+has_failed=false
 [[ $(jq 'length' <<<"$ANDROID_MATRIX") -gt 0 ]] && has_android=true
 [[ $(jq 'length' <<<"$IOS_MATRIX") -gt 0 ]] && has_ios=true
+[[ $(jq 'length' <<<"$FAILED_MATRIX") -gt 0 ]] && has_failed=true
 {
   printf 'has_android=%s\n' "$has_android"
   printf 'has_ios=%s\n' "$has_ios"
+  printf 'has_failed=%s\n' "$has_failed"
   printf 'android_matrix=%s\n' "$ANDROID_MATRIX"
   printf 'ios_matrix=%s\n' "$IOS_MATRIX"
+  printf 'failed_matrix=%s\n' "$FAILED_MATRIX"
   printf 'requested_matrix=%s\n' "$REQUESTED_MATRIX"
 } >>"$GITHUB_OUTPUT"

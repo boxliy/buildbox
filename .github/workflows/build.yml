@@ -30,6 +30,29 @@ permissions:
   contents: read
 
 jobs:
+  chunk:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      requested_matrix: ${{ steps.requested.outputs.requested_matrix }}
+    steps:
+      - name: Checkout buildbox
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: boxliy/buildbox
+          ref: 42234dea6c1b781136b9c4c6d04a6b2fddba98c0
+          persist-credentials: false
+
+      - name: Resolve requested chunk runs
+        id: requested
+        env:
+          BUILDBOX_RUN_ID: ${{ inputs.build_run_id }}
+          BUILD_RUN_IDS: ${{ inputs.build_run_ids }}
+        run: scripts/requested-runs
+
   prepare:
     if: github.event_name == 'workflow_dispatch'
     permissions:
@@ -255,6 +278,29 @@ jobs:
       HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
       HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
 
+  finalize-failed:
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && needs.prepare.result == 'success' && needs.prepare.outputs.has_failed == 'true' }}
+    needs: [prepare]
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        item: ${{ fromJson(needs.prepare.outputs.failed_matrix || '[]') }}
+    uses: boxliy/buildbox/.github/workflows/finalize.yml@42234dea6c1b781136b9c4c6d04a6b2fddba98c0
+    with:
+      build_run_id: ${{ matrix.item.build_run_id }}
+      tools_sha: 42234dea6c1b781136b9c4c6d04a6b2fddba98c0
+      prepare_result: failure
+      compile_result: skipped
+      sign_result: skipped
+      failure_reason: prepare failed before compile
+    secrets:
+      HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+      HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+
   finalize-ios:
     if: ${{ always() && github.event_name == 'workflow_dispatch' && needs.prepare.result == 'success' && needs.prepare.outputs.has_ios == 'true' }}
     needs: [prepare, compile-ios, sign-ios]
@@ -279,13 +325,18 @@ jobs:
 
   finalize-prepare:
     if: ${{ always() && github.event_name == 'workflow_dispatch' && needs.prepare.result != 'skipped' && needs.prepare.result != 'success' }}
-    needs: [prepare]
+    needs: [prepare, chunk]
     permissions:
       contents: read
       id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        item: ${{ fromJson(needs.chunk.outputs.requested_matrix || '[]') }}
     uses: boxliy/buildbox/.github/workflows/finalize.yml@42234dea6c1b781136b9c4c6d04a6b2fddba98c0
     with:
-      build_run_id: ${{ inputs.build_run_id }}
+      build_run_id: ${{ matrix.item.build_run_id }}
       tools_sha: 42234dea6c1b781136b9c4c6d04a6b2fddba98c0
       prepare_result: ${{ needs.prepare.result }}
       compile_result: skipped
