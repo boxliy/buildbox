@@ -785,4 +785,65 @@ if BUILD_RUN_IDS="$MANY" BUILDBOX_RUN_ID=401 GITHUB_OUTPUT="$CHUNK_ROOT/too-many
 fi
 assert_file_contains "$CHUNK_ROOT/too-many.err" 'a chunk can contain at most 20 runs'
 
+
+# Four chunk members exchange prepare credentials even when GITHUB_ENV holds only the previous token.
+FOUR_ROOT=$(mktemp -d)
+FOUR_PRIMARY="$FOUR_ROOT/runner/buildbox/401"
+FOUR_ENV="$FOUR_ROOT/github-env"
+FOUR_OUT="$FOUR_ROOT/github-output"
+FOUR_CURL="$FOUR_ROOT/curl.log"
+mkdir -p "$FOUR_PRIMARY" "$FOUR_ROOT/workspace/aviary-source"
+cp -a "$GITHUB_WORKSPACE/aviary-source/." "$FOUR_ROOT/workspace/aviary-source/"
+printf 'BUILDBOX_STATE_DIR=%s\n' "$FOUR_PRIMARY" >"$FOUR_ROOT/preload-env"
+BUILDBOX_STATE_DIR="$FOUR_PRIMARY" \
+  GITHUB_ENV="$FOUR_ROOT/preload-env" \
+  GITHUB_OUTPUT="$FOUR_ROOT/preload-output" \
+  GITHUB_WORKSPACE="$FOUR_ROOT/workspace" \
+  RUNNER_TEMP="$FOUR_ROOT/runner" \
+  BUILDBOX_RUN_ID=401 \
+  "$ROOT/scripts/exchange-stage" prepare >/dev/null
+set -a
+# shellcheck disable=SC1090
+source "$FOUR_ROOT/preload-env"
+set +a
+BUILDBOX_STATE_DIR="$FOUR_PRIMARY" \
+  GITHUB_ENV="$FOUR_ROOT/preload-env" \
+  GITHUB_OUTPUT="$FOUR_ROOT/preload-output" \
+  BUILDBOX_RUN_ID=401 \
+  "$ROOT/scripts/load-build-spec" 401 >/dev/null
+: >"$FOUR_ENV"
+: >"$FOUR_CURL"
+GITHUB_ENV="$FOUR_ENV" \
+  GITHUB_OUTPUT="$FOUR_OUT" \
+  GITHUB_WORKSPACE="$FOUR_ROOT/workspace" \
+  RUNNER_TEMP="$FOUR_ROOT/runner" \
+  CURL_LOG="$FOUR_CURL" \
+  ALLOWED_SOURCE=boxliy/aviary \
+  MOCK_SHARED_SOURCE_SPECS=1 \
+  BUILD_RUN_IDS='401,402,403,404' \
+  BUILDBOX_RUN_ID=401 \
+  "$ROOT/scripts/prepare-chunk" >"$FOUR_ROOT/prepare.out" 2>"$FOUR_ROOT/prepare.err" || {
+    printf 'prepare-chunk failed for four runs\n' >&2
+    cat "$FOUR_ROOT/prepare.err" >&2
+    exit 1
+  }
+assert_file_contains "$FOUR_OUT" 'has_failed=false'
+assert_file_contains "$FOUR_OUT" 'failed_matrix=[]'
+four_ids=$(sed -n 's/^android_matrix=//p' "$FOUR_OUT" | jq -r 'map(.build_run_id) | join(",")')
+[[ "$four_ids" == "401,402,403,404" ]] || {
+  printf 'expected four prepared android runs, got %s\n' "$four_ids" >&2
+  exit 1
+}
+token_lines=$(grep -c '^HAWK_STAGE_TOKEN=' "$FOUR_ENV" || true)
+[[ "$token_lines" -eq 1 ]] || {
+  printf 'expected one stage token line after four exchanges, got %s\n' "$token_lines" >&2
+  exit 1
+}
+four_exchanges=$(grep -c '/api/v1/buildbox/auth/exchange' "$FOUR_CURL" || true)
+[[ "$four_exchanges" -eq 3 ]] || {
+  printf 'expected three member exchanges after the preloaded primary, got %s\n' "$four_exchanges" >&2
+  exit 1
+}
+assert_file_not_contains "$FOUR_CURL" '/callback'
+
 printf 'contract tests passed\n'

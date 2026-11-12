@@ -57,7 +57,8 @@ TOKEN=$(printf '%s' "$RESPONSE" | jq -er '.token | select(type == "string" and l
 printf '::add-mask::%s\n' "$TOKEN"
 umask 077
 if grep -q '^HAWK_VALIDATION_TOKEN=' "$GITHUB_ENV"; then
-  grep -v '^HAWK_VALIDATION_TOKEN=' "$GITHUB_ENV" >"$GITHUB_ENV.next"
+  # grep -v exits 1 when the token is the only line. That is success under set -e.
+  { grep -v '^HAWK_VALIDATION_TOKEN=' "$GITHUB_ENV" || [[ $? -eq 1 ]]; } >"$GITHUB_ENV.next"
   mv "$GITHUB_ENV.next" "$GITHUB_ENV"
 fi
 printf 'HAWK_VALIDATION_TOKEN=%s\n' "$TOKEN" >>"$GITHUB_ENV"

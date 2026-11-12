@@ -43,7 +43,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: a04260af78910fbf7cb02491114c28477f847e22
+          ref: 942cde9ccdc50a3e684fca45dfae72778dc429a7
           persist-credentials: false
 
       - name: Resolve requested chunk runs
@@ -59,11 +59,11 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/prepare.yml@a04260af78910fbf7cb02491114c28477f847e22
+    uses: boxliy/buildbox/.github/workflows/prepare.yml@942cde9ccdc50a3e684fca45dfae72778dc429a7
     with:
       build_run_id: ${{ inputs.build_run_id }}
       build_run_ids: ${{ inputs.build_run_ids }}
-      tools_sha: a04260af78910fbf7cb02491114c28477f847e22
+      tools_sha: 942cde9ccdc50a3e684fca45dfae72778dc429a7
     secrets:
       HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
       HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
@@ -92,7 +92,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: a04260af78910fbf7cb02491114c28477f847e22
+          ref: 942cde9ccdc50a3e684fca45dfae72778dc429a7
           persist-credentials: false
 
       - name: Restore compile inputs
@@ -169,7 +169,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: boxliy/buildbox
-          ref: a04260af78910fbf7cb02491114c28477f847e22
+          ref: 942cde9ccdc50a3e684fca45dfae72778dc429a7
           persist-credentials: false
 
       - name: Restore compile inputs
@@ -228,11 +228,11 @@ jobs:
       max-parallel: 4
       matrix:
         item: ${{ fromJson(needs.prepare.outputs.android_matrix || '[]') }}
-    uses: boxliy/buildbox/.github/workflows/sign.yml@a04260af78910fbf7cb02491114c28477f847e22
+    uses: boxliy/buildbox/.github/workflows/sign.yml@942cde9ccdc50a3e684fca45dfae72778dc429a7
     with:
       build_run_id: ${{ matrix.item.build_run_id }}
       platform: android
-      tools_sha: a04260af78910fbf7cb02491114c28477f847e22
+      tools_sha: 942cde9ccdc50a3e684fca45dfae72778dc429a7
     secrets:
       HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
       HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
@@ -248,11 +248,11 @@ jobs:
       max-parallel: 2
       matrix:
         item: ${{ fromJson(needs.prepare.outputs.ios_matrix || '[]') }}
-    uses: boxliy/buildbox/.github/workflows/sign.yml@a04260af78910fbf7cb02491114c28477f847e22
+    uses: boxliy/buildbox/.github/workflows/sign.yml@942cde9ccdc50a3e684fca45dfae72778dc429a7
     with:
       build_run_id: ${{ matrix.item.build_run_id }}
       platform: ios
-      tools_sha: a04260af78910fbf7cb02491114c28477f847e22
+      tools_sha: 942cde9ccdc50a3e684fca45dfae72778dc429a7
     secrets:
       HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
       HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
@@ -268,10 +268,10 @@ jobs:
       max-parallel: 4
       matrix:
         item: ${{ fromJson(needs.prepare.outputs.android_matrix || '[]') }}
-    uses: boxliy/buildbox/.github/workflows/finalize.yml@a04260af78910fbf7cb02491114c28477f847e22
+    uses: boxliy/buildbox/.github/workflows/finalize.yml@942cde9ccdc50a3e684fca45dfae72778dc429a7
     with:
       build_run_id: ${{ matrix.item.build_run_id }}
-      tools_sha: a04260af78910fbf7cb02491114c28477f847e22
+      tools_sha: 942cde9ccdc50a3e684fca45dfae72778dc429a7
       prepare_result: ${{ needs.prepare.result }}
       compile_result: ${{ needs.compile.result == 'cancelled' && 'cancelled' || 'success' }}
       sign_result: ${{ needs.sign.result == 'cancelled' && 'cancelled' || 'success' }}
@@ -290,10 +290,10 @@ jobs:
       max-parallel: 4
       matrix:
         item: ${{ fromJson(needs.prepare.outputs.failed_matrix || '[]') }}
-    uses: boxliy/buildbox/.github/workflows/finalize.yml@a04260af78910fbf7cb02491114c28477f847e22
+    uses: boxliy/buildbox/.github/workflows/finalize.yml@942cde9ccdc50a3e684fca45dfae72778dc429a7
     with:
       build_run_id: ${{ matrix.item.build_run_id }}
-      tools_sha: a04260af78910fbf7cb02491114c28477f847e22
+      tools_sha: 942cde9ccdc50a3e684fca45dfae72778dc429a7
       prepare_result: failure
       compile_result: skipped
       sign_result: skipped
@@ -313,10 +313,10 @@ jobs:
       max-parallel: 2
       matrix:
         item: ${{ fromJson(needs.prepare.outputs.ios_matrix || '[]') }}
-    uses: boxliy/buildbox/.github/workflows/finalize.yml@a04260af78910fbf7cb02491114c28477f847e22
+    uses: boxliy/buildbox/.github/workflows/finalize.yml@942cde9ccdc50a3e684fca45dfae72778dc429a7
     with:
       build_run_id: ${{ matrix.item.build_run_id }}
-      tools_sha: a04260af78910fbf7cb02491114c28477f847e22
+      tools_sha: 942cde9ccdc50a3e684fca45dfae72778dc429a7
       prepare_result: ${{ needs.prepare.result }}
       compile_result: ${{ needs.compile-ios.result == 'cancelled' && 'cancelled' || 'success' }}
       sign_result: ${{ needs.sign-ios.result == 'cancelled' && 'cancelled' || 'success' }}
@@ -335,10 +335,10 @@ jobs:
       max-parallel: 4
       matrix:
         item: ${{ fromJson(needs.chunk.outputs.requested_matrix || '[]') }}
-    uses: boxliy/buildbox/.github/workflows/finalize.yml@a04260af78910fbf7cb02491114c28477f847e22
+    uses: boxliy/buildbox/.github/workflows/finalize.yml@942cde9ccdc50a3e684fca45dfae72778dc429a7
     with:
       build_run_id: ${{ matrix.item.build_run_id }}
-      tools_sha: a04260af78910fbf7cb02491114c28477f847e22
+      tools_sha: 942cde9ccdc50a3e684fca45dfae72778dc429a7
       prepare_result: ${{ needs.prepare.result }}
       compile_result: skipped
       sign_result: skipped

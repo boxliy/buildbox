@@ -92,6 +92,15 @@ case "$method:$url" in
   GET:*'/api/v1/buildbox/build-specs/101?run_id=401' | GET:*'/api/v1/buildbox/runs/401/spec')
     cp "$FIXTURE_DIR/build-spec-apk.json" "$output"
     ;;
+  GET:*'/api/v1/buildbox/runs/402/spec' | GET:*'/api/v1/buildbox/runs/403/spec' | GET:*'/api/v1/buildbox/runs/404/spec')
+    if [[ "${MOCK_SHARED_SOURCE_SPECS:-}" != 1 ]]; then
+      printf 'unexpected curl call: %s %s\n' "$method" "$url" >&2
+      exit 1
+    fi
+    run_id=${url##*/runs/}
+    run_id=${run_id%/spec}
+    jq --arg runId "$run_id" '.runId = $runId' "$FIXTURE_DIR/build-spec-apk.json" >"$output"
+    ;;
   GET:*'/api/v1/buildbox/build-specs/102?run_id=402')
     cp "$FIXTURE_DIR/build-spec-aab.json" "$output"
     ;;
