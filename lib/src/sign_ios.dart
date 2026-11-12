@@ -7,6 +7,13 @@ import 'core.dart';
 import 'archive.dart';
 import 'ios.dart';
 
+String extractEntitlementsPlist(String raw) {
+  final xml = raw.indexOf('<?xml');
+  final start = xml >= 0 ? xml : raw.indexOf('<plist');
+  require(start >= 0, 'missing signed entitlements plist');
+  return raw.substring(start);
+}
+
 Uint8List certificateDer(String pem) {
   final match = RegExp(
     r'-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----',
@@ -42,7 +49,15 @@ Future<void> verifySigned(
     );
   }
   final actual = parsePlist(
-    await run(['codesign', '--display', '--entitlements', ':-', product.path]),
+    extractEntitlementsPlist(
+      await run([
+        'codesign',
+        '--display',
+        '--entitlements',
+        ':-',
+        product.path,
+      ]),
+    ),
   );
   require(same(actual, entitlements), 'signed entitlements mismatch');
   require(
@@ -140,6 +155,15 @@ Future<void> signIos() async {
       '-passin',
       'env:IOS_CONTAINER_PASSWORD',
     ], environment: env);
+    final keyPem = await opensslPkcs12([
+      '-in',
+      p12.path,
+      '-nocerts',
+      '-nodes',
+      '-passin',
+      'env:IOS_CONTAINER_PASSWORD',
+    ], environment: env);
+    require(keyPem.contains('PRIVATE KEY'), 'missing signing private key');
     final der = certificateDer(pem);
     final certificateFile = File('${private.path}/certificate.pem')
       ..writeAsStringSync(pem);
@@ -196,7 +220,7 @@ Future<void> signIos() async {
     await tool(['security', 'create-keychain', '-p', password, keychain]);
     try {
       await tool(['security', 'unlock-keychain', '-p', password, keychain]);
-      await tool([
+      var imported = await toolResult([
         'security',
         'import',
         p12.path,
@@ -207,16 +231,54 @@ Future<void> signIos() async {
         '-T',
         '/usr/bin/codesign',
       ]);
-      await tool([
-        'security',
-        'set-key-partition-list',
-        '-S',
-        'apple-tool:,apple:',
-        '-s',
-        '-k',
-        password,
-        keychain,
-      ]);
+      if (imported.exitCode != 0) {
+        final keyFile = await privateFile(
+          '${private.path}/key.pem',
+          utf8.encode(keyPem),
+        );
+        final legacyP12 = File('${private.path}/identity-legacy.p12');
+        final exported = await toolResult([
+          'openssl',
+          'pkcs12',
+          '-export',
+          '-legacy',
+          '-in',
+          certificateFile.path,
+          '-inkey',
+          keyFile.path,
+          '-out',
+          legacyP12.path,
+          '-passout',
+          'env:IOS_CONTAINER_PASSWORD',
+        ], environment: env);
+        if (exported.exitCode == 0) {
+          imported = await toolResult([
+            'security',
+            'import',
+            legacyP12.path,
+            '-k',
+            keychain,
+            '-P',
+            material['password'] as String,
+            '-T',
+            '/usr/bin/codesign',
+          ]);
+        }
+      }
+      var partitioned = false;
+      if (imported.exitCode == 0) {
+        final partition = await toolResult([
+          'security',
+          'set-key-partition-list',
+          '-S',
+          'apple-tool:,apple:',
+          '-s',
+          '-k',
+          password,
+          keychain,
+        ]);
+        partitioned = partition.exitCode == 0;
+      }
       final identity = sha1.convert(der).toString();
       final nested =
           app
@@ -247,15 +309,17 @@ Future<void> signIos() async {
         return true;
       }
 
-      final trusted = await signProducts([
-        'codesign',
-        '--force',
-        '--sign',
-        identity,
-        '--keychain',
-        keychain,
-        '--timestamp=none',
-      ]);
+      final trusted =
+          partitioned &&
+          await signProducts([
+            'codesign',
+            '--force',
+            '--sign',
+            identity,
+            '--keychain',
+            keychain,
+            '--timestamp=none',
+          ]);
       final adHoc = !trusted;
       if (adHoc) {
         require(
@@ -282,13 +346,6 @@ Future<void> signIos() async {
       }
       for (final item in nested) {
         await tool(['codesign', '--verify', '--strict', item.path]);
-        await tool([
-          'codesign',
-          '--display',
-          '--entitlements',
-          ':-',
-          item.path,
-        ]);
         if (!adHoc) {
           final prefix = '${private.path}/nested-cert-';
           await tool([
@@ -308,7 +365,7 @@ Future<void> signIos() async {
       Directory('$state/artifacts').createSync();
       zipTree(extraction, destination);
     } finally {
-      await tool(['security', 'delete-keychain', keychain]);
+      await toolResult(['security', 'delete-keychain', keychain]);
     }
   });
   final file = File(destination),

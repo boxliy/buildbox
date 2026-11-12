@@ -72,4 +72,68 @@ void main() {
       });
     },
   );
+  test(
+    'entitlement plists keep a leading CSMAGIC header and ad-hoc signing skips certificate extraction',
+    () async {
+      await temporary('test-signed-ios-header-', (dir) async {
+        final app = Directory('${dir.path}/Runner.app'),
+            m = metadata(),
+            certificate = Uint8List.fromList([1, 2, 3]),
+            profile = Uint8List.fromList([4, 5, 6]),
+            entitlements = <String, dynamic>{
+              'application-identifier': 'ABCDEFGHIJ.com.example.swan',
+            };
+        await createApp(app, m);
+        File('${app.path}/embedded.mobileprovision').writeAsBytesSync(profile);
+        final prefixed =
+            '\uFFFD\uFFFDqq\x00\x00\x01\x20${encodePlist(entitlements)}';
+        expect(extractEntitlementsPlist(prefixed), encodePlist(entitlements));
+        expect(
+          () => extractEntitlementsPlist('not a plist'),
+          throwsFormatException,
+        );
+        final commands = <List<String>>[];
+        Future<String> execute(List<String> args) async {
+          commands.add(args);
+          if (args.contains('--verify')) return '';
+          if (args.contains('--entitlements')) return prefixed;
+          throw StateError('unexpected native command');
+        }
+
+        await verifySigned(
+          app,
+          m,
+          certificate,
+          entitlements,
+          profile,
+          dir,
+          execute: execute,
+          adHoc: true,
+        );
+        expect(
+          commands.any((args) => args.contains('--extract-certificates')),
+          isFalse,
+        );
+        commands.clear();
+        Future<String> missing(List<String> args) async {
+          if (args.contains('--entitlements')) return 'not a plist';
+          return '';
+        }
+
+        await expectLater(
+          verifySigned(
+            app,
+            m,
+            certificate,
+            entitlements,
+            profile,
+            dir,
+            execute: missing,
+            adHoc: true,
+          ),
+          throwsFormatException,
+        );
+      });
+    },
+  );
 }
