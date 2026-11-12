@@ -54,7 +54,8 @@ jobs:
         run: scripts/requested-runs
 
   prepare:
-    if: github.event_name == 'workflow_dispatch'
+    needs: [chunk]
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.chunk.result == 'success' }}
     permissions:
       contents: read
       id-token: write

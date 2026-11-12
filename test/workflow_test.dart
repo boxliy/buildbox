@@ -335,6 +335,12 @@ void main() {
         'finalize-prepare',
       ]),
     );
+    final prepare = jobs['prepare'] as YamlMap;
+    expect(prepare['needs'], contains('chunk'));
+    final prepareIf = prepare['if'] as String;
+    expect(prepareIf, contains("github.event_name == 'workflow_dispatch'"));
+    expect(prepareIf, contains("needs.chunk.result == 'success'"));
+    expect(prepareIf, isNot(contains('always()')));
     final failed = jobs['finalize-failed'] as YamlMap;
     expect(failed['strategy']['fail-fast'], isFalse);
     expect(failed['with']['build_run_id'], r'${{ matrix.item.build_run_id }}');
