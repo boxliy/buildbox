@@ -29,10 +29,10 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: boxliy/buildbox/.github/workflows/validate-signing-material.yml@238e49fe10d3257d3854483f41d7accae0c95873
+    uses: boxliy/buildbox/.github/workflows/validate-signing-material.yml@a04260af78910fbf7cb02491114c28477f847e22
     secrets:
       HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
     with:
       validation_id: ${{ inputs.validation_id }}
       hawk_base_url: ${{ inputs.hawk_base_url }}
-      validator_sha: 238e49fe10d3257d3854483f41d7accae0c95873
+      validator_sha: a04260af78910fbf7cb02491114c28477f847e22
