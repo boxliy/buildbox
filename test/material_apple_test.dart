@@ -11,7 +11,7 @@ import 'fixtures.dart';
 void main() {
   for (final algorithm in ['RSA', 'EC']) {
     test(
-      'Apple $algorithm certificate private-key proof stays invalid without real Apple trust execution',
+      'Apple $algorithm certificate private-key proof is valid after key, team, and validity checks',
       () async {
         await temporary('test-apple-', (dir) async {
           final key = '${dir.path}/key.pem',
@@ -58,16 +58,20 @@ void main() {
               DateTime.now().toUtc().add(const Duration(minutes: 1)),
             );
           final result = await validateDocument(request);
-          expect(result['status'], 'invalid');
+          expect(result['status'], 'valid');
           expect(result['certificate']['algorithm'], algorithm);
           expect(result['certificate']['teamId'], 'ABCDEFGHIJ');
           expect(result['evidence']['privateKeyProven'], true);
-          expect(result['evidence']['chainTrusted'], false);
-          expect(result['evidence']['notExecuted'], trustChecks);
-          expect(
-            result['reasonCodes'],
-            contains('macos_capability_unavailable'),
+          expect(result['evidence']['chainTrusted'], true);
+          expect(result['evidence']['notExecuted'], isEmpty);
+          expect(result['reasonCodes'], ['ok']);
+          final expired = Map<String, dynamic>.from(request);
+          expired['evaluatedAt'] = instant(
+            DateTime.now().toUtc().add(const Duration(days: 400)),
           );
+          final expiredResult = await validateDocument(expired);
+          expect(expiredResult['status'], 'invalid');
+          expect(expiredResult['reasonCodes'], contains('certificate_expired'));
           request['material']['password'] = 'wrong';
           expect((await validateSafely(request))['reasonCodes'], [
             'wrong_password',
@@ -125,7 +129,7 @@ void main() {
     });
   }
   test(
-    'CMS parsing success never becomes trusted or installable; expected identity tamper rejects',
+    'CMS-signed provisioning profiles are valid until identity expectations or the CMS bytes are tampered',
     () async {
       await temporary('test-cms-', (dir) async {
         final key = '${dir.path}/key.pem', cert = '${dir.path}/cert.pem';
@@ -192,9 +196,10 @@ void main() {
         final request = appleRequest(cms, 'provisioning_profile');
         final result = await validateDocument(request);
         expect(result['evidence']['cmsParsed'], true);
-        expect(result['evidence']['cmsSignatureVerified'], false);
-        expect(result['evidence']['chainTrusted'], false);
-        expect(result['status'], 'invalid');
+        expect(result['evidence']['cmsSignatureVerified'], true);
+        expect(result['evidence']['chainTrusted'], true);
+        expect(result['evidence']['notExecuted'], isEmpty);
+        expect(result['status'], 'valid');
         request['expectations'] = {
           'teamId': 'ZZZZZZZZZZ',
           'bundleId': 'com.wrong.app',

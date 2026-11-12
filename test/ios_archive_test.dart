@@ -78,4 +78,35 @@ void main() {
       );
     });
   });
+
+  test('packageIos strips pre-signed framework signatures', () async {
+    await temporary('test-ios-strip-', (dir) async {
+      final host = metadata();
+      final build = Directory('${dir.path}/iphoneos')..createSync(),
+          app = Directory('${build.path}/Runner.app'),
+          signature = Directory(
+            '${app.path}/Frameworks/Flutter.framework/_CodeSignature',
+          );
+      await createApp(app, host);
+      signature.createSync(recursive: true);
+      File('${signature.path}/CodeResources').writeAsStringSync('signed');
+      File(
+        '${app.path}/Frameworks/Flutter.framework/embedded.mobileprovision',
+      ).writeAsBytesSync([1, 2, 3]);
+      final output = '${dir.path}/unsigned.ipa';
+      await packageIos(build.path, output, {
+        'config': {
+          'appDisplayName': host['appDisplayName'],
+          'appProfile': host,
+          'signing': {'source': 'tenant', 'components': <dynamic>[]},
+        },
+      });
+      final names = checkedZip(output).map((entry) => entry.name);
+      expect(names.any((name) => name.contains('_CodeSignature')), false);
+      expect(
+        names.any((name) => name.endsWith('embedded.mobileprovision')),
+        false,
+      );
+    });
+  });
 }

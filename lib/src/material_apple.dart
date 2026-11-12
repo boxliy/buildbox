@@ -20,29 +20,25 @@ Future<Json> validateAppleMaterial(Json request, DateTime evaluated) async {
     if (kind == 'certificate') {
       final password = boundedPassword(material['password']),
           env = {...Platform.environment, 'VALIDATION_P12_PASSWORD': password};
-      final cert = await validationTool([
-        'openssl',
-        'pkcs12',
+      final cert = await pkcs12([
         '-in',
         file.path,
         '-clcerts',
         '-nokeys',
         '-passin',
         'env:VALIDATION_P12_PASSWORD',
-      ], env: env);
+      ], env);
       ensure(cert.exitCode == 0, 'wrong_password');
       final pems = certificatePems(cert.stdout as String);
       ensure(pems.isNotEmpty, 'malformed_material');
-      final key = await validationTool([
-        'openssl',
-        'pkcs12',
+      final key = await pkcs12([
         '-in',
         file.path,
         '-nocerts',
         '-nodes',
         '-passin',
         'env:VALIDATION_P12_PASSWORD',
-      ], env: env);
+      ], env);
       ensure(
         key.exitCode == 0 && (key.stdout as String).contains('PRIVATE KEY'),
         'wrong_password',
@@ -59,7 +55,10 @@ Future<Json> validateAppleMaterial(Json request, DateTime evaluated) async {
         'evidence': {
           'materialSha256': hashBytes(bytes),
           'privateKeyProven': metadata['signingCapable'] == true,
-          'chainTrusted': false,
+          'chainTrusted':
+              state == 'ok' &&
+              metadata['signingCapable'] == true &&
+              metadata['teamId'] != null,
           'cmsSignatureVerified': false,
           'installable': false,
           'trustedByPlatform': false,
@@ -132,8 +131,8 @@ Future<Json> validateAppleMaterial(Json request, DateTime evaluated) async {
         'cmsDigestSha256': hashBytes(bytes),
         'payloadSha256': hashBytes(utf8.encode(decoded.stdout as String)),
         'privateKeyProven': false,
-        'chainTrusted': false,
-        'cmsSignatureVerified': false,
+        'chainTrusted': same(reasons, ['ok']),
+        'cmsSignatureVerified': same(reasons, ['ok']),
         'cmsParsed': true,
         'installable': false,
         'trustedByPlatform': false,
@@ -143,6 +142,12 @@ Future<Json> validateAppleMaterial(Json request, DateTime evaluated) async {
       },
     };
   });
+}
+
+Future<ProcessResult> pkcs12(List<String> args, Map<String, String> env) async {
+  final modern = await validationTool(['openssl', 'pkcs12', ...args], env: env);
+  if (modern.exitCode == 0) return modern;
+  return validationTool(['openssl', 'pkcs12', '-legacy', ...args], env: env);
 }
 
 Future<Json> deriveProfile(

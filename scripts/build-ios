@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 set +x
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 state=${BUILDBOX_STATE_DIR:?}
 source_root=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:?}/aviary-source}
@@ -19,9 +20,19 @@ identifier=$(jq -er '.config.applicationIdentifier' "$state/spec.json")
 name=$(jq -er '.config.appDisplayName' "$state/spec.json")
 "$script_dir/dart-tool" ios-identity "$state/identity.xcconfig" "$identifier" "$name"
 export XCODE_XCCONFIG_FILE="$state/identity.xcconfig"
-jq -e '.config.dartDefines' "$state/spec.json" >"$state/ios-dart-defines.json"
+jq -e '(.config.dartDefines // {}) + (if ((.config.swanConfig // {}) | length) > 0 then {"SWAN_CONFIG_JSON": (.config.swanConfig | tojson)} else {} end)' "$state/spec.json" >"$state/ios-dart-defines.json"
 cd "$source_root/waterfowl/apps/swan"
+flutter pub get --enforce-lockfile
 "$script_dir/dart-tool" ios-configure "$state/spec.json" ios/Runner.xcodeproj
 flutter build ios --release --no-codesign --no-pub --build-name="$version" --build-number="$number" "--dart-define-from-file=$state/ios-dart-defines.json"
 mkdir -p "$state/unsigned"
 "$script_dir/dart-tool" ios-package build/ios/iphoneos "$state/unsigned/swan-release.ipa" "$state/spec.json"
+ipa_sha256=$(shasum -a 256 "$state/unsigned/swan-release.ipa" | awk '{print $1}')
+ipa_byte_size=$(wc -c <"$state/unsigned/swan-release.ipa" | tr -d '[:space:]')
+jq -n \
+  --arg path "$state/unsigned/swan-release.ipa" \
+  --arg sha256 "sha256:$ipa_sha256" \
+  --argjson byteSize "$ipa_byte_size" \
+  '{target: "ipa", path: $path, fileName: "swan-release.ipa", sha256: $sha256, byteSize: $byteSize, stage: "unsigned"}' \
+  >"$state/unsigned/ipa.json"
+jq -s '.' "$state/unsigned"/*.json >"$state/unsigned-manifest.json"

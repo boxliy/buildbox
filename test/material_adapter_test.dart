@@ -122,6 +122,35 @@ void main() {
         () => hawkResult(e, offline, '2026-11-01T00:00:00Z'),
         throwsA(isA<ValidationFailure>()),
       );
+      final apple = validationEnvelope()..['kind'] = 'apple_certificate';
+      final appleScope = offlineRequest(apple, '2026-11-01T00:00:00Z')['scope'];
+      final appleResult = <String, dynamic>{
+        'contract': contract,
+        'scope': appleScope,
+        'status': 'valid',
+        'reasonCodes': ['ok'],
+        'certificate': {
+          'teamId': 'ABCDEFGHIJ',
+          'certificateSha256': 'a' * 64,
+          'notBefore': '2026-01-01T00:00:00Z',
+          'expiresAt': '2030-01-01T00:00:00Z',
+        },
+        'evidence': {
+          'privateKeyProven': true,
+          'chainTrusted': true,
+          'cmsSignatureVerified': false,
+          'notExecuted': <String>[],
+        },
+      };
+      final published = hawkResult(apple, appleResult, '2026-11-01T00:00:00Z');
+      expect(published['status'], 'valid');
+      expect(published['evidence']['chainTrusted'], true);
+      expect(published['evidence']['notExecuted'], isEmpty);
+      appleResult['evidence']['notExecuted'] = trustChecks;
+      expect(
+        () => hawkResult(apple, appleResult, '2026-11-01T00:00:00Z'),
+        throwsA(isA<ValidationFailure>()),
+      );
     },
   );
   test('secret-shaped result fields and PEM strings never escape', () {

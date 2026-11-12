@@ -62,7 +62,7 @@ jobs:
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0' >/dev/null
           echo "$ANDROID_HOME/build-tools/35.0.0" >>"$GITHUB_PATH"
-          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/bundletool.jar" https://github.com/google/bundletool/releases/download/1.18.2/bundletool-all-1.18.2.jar
+          curl --retry 5 --retry-all-errors --fail --silent --show-error --location --output "$RUNNER_TEMP/bundletool.jar" https://github.com/google/bundletool/releases/download/1.18.2/bundletool-all-1.18.2.jar
           echo 'BUILDBOX_BUNDLETOOL_JAR='"$RUNNER_TEMP/bundletool.jar" >>"$GITHUB_ENV"
           echo 'BUILDBOX_BUNDLETOOL_SHA256=378b5434cd1378bef6b2bc527b8c7f0ff2584b273830335bce54d6d0813c8584' >>"$GITHUB_ENV"
 
