@@ -86,9 +86,17 @@ Future<Json> validateAppleMaterial(Json request, DateTime evaluated) async {
     } catch (_) {
       invalid('cms_invalid');
     }
-    final derived = await deriveProfile(profile, evaluated, dir),
-        expected = request['expectations'] as Json? ?? {},
-        reasons = (derived['reasonCodes'] as List).cast<String>();
+    final expected = request['expectations'] as Json? ?? {},
+        expectedCertificate = expected['certificateSha256'];
+    final derived = await deriveProfile(
+      profile,
+      evaluated,
+      dir,
+      expectedCertificateSha256: expectedCertificate is String
+          ? expectedCertificate
+          : null,
+    );
+    final reasons = (derived['reasonCodes'] as List).cast<String>();
     final facts = derived['profile'] as Json;
     void compare(String expectedKey, String factKey, String code) {
       if (expected[expectedKey] != null &&
@@ -153,8 +161,9 @@ Future<ProcessResult> pkcs12(List<String> args, Map<String, String> env) async {
 Future<Json> deriveProfile(
   Json profile,
   DateTime evaluated,
-  Directory dir,
-) async {
+  Directory dir, {
+  String? expectedCertificateSha256,
+}) async {
   final reasons = <String>[];
   String? one(dynamic value, String code) {
     if (value is List &&
@@ -189,6 +198,7 @@ Future<Json> deriveProfile(
     reasons.add('team_mismatch');
   final certs = profile['DeveloperCertificates'];
   final fingerprints = <String>[];
+  final validityByFingerprint = <String, String>{};
   if (certs is! List || certs.isEmpty || certs.length > 8) {
     reasons.add('certificate_mismatch');
   } else {
@@ -201,11 +211,29 @@ Future<Json> deriveProfile(
       try {
         final pem =
             '-----BEGIN CERTIFICATE-----\n${base64.encode(data)}\n-----END CERTIFICATE-----';
-        await certificateMetadata(pem, dir, evaluated, name: 'profile-$i');
-        fingerprints.add(hashBytes(data));
+        final metadata = await certificateMetadata(
+          pem,
+          dir,
+          evaluated,
+          name: 'profile-$i',
+        );
+        final fingerprint = hashBytes(data);
+        fingerprints.add(fingerprint);
+        final state = metadata['validity'];
+        if (state is String) validityByFingerprint[fingerprint] = state;
       } catch (_) {
         reasons.add('certificate_mismatch');
       }
+    }
+  }
+  if (fingerprints.isNotEmpty) {
+    if (expectedCertificateSha256 != null) {
+      final state = validityByFingerprint[expectedCertificateSha256];
+      if (state != null && state != 'ok') reasons.add(state);
+    } else if (!validityByFingerprint.values.contains('ok')) {
+      reasons.addAll(
+        validityByFingerprint.values.where((state) => state != 'ok'),
+      );
     }
   }
   final devices = profile['ProvisionedDevices'],
