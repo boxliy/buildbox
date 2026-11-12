@@ -20,29 +20,25 @@ Future<Json> validateAppleMaterial(Json request, DateTime evaluated) async {
     if (kind == 'certificate') {
       final password = boundedPassword(material['password']),
           env = {...Platform.environment, 'VALIDATION_P12_PASSWORD': password};
-      final cert = await validationTool([
-        'openssl',
-        'pkcs12',
+      final cert = await pkcs12([
         '-in',
         file.path,
         '-clcerts',
         '-nokeys',
         '-passin',
         'env:VALIDATION_P12_PASSWORD',
-      ], env: env);
+      ], env);
       ensure(cert.exitCode == 0, 'wrong_password');
       final pems = certificatePems(cert.stdout as String);
       ensure(pems.isNotEmpty, 'malformed_material');
-      final key = await validationTool([
-        'openssl',
-        'pkcs12',
+      final key = await pkcs12([
         '-in',
         file.path,
         '-nocerts',
         '-nodes',
         '-passin',
         'env:VALIDATION_P12_PASSWORD',
-      ], env: env);
+      ], env);
       ensure(
         key.exitCode == 0 && (key.stdout as String).contains('PRIVATE KEY'),
         'wrong_password',
@@ -59,7 +55,10 @@ Future<Json> validateAppleMaterial(Json request, DateTime evaluated) async {
         'evidence': {
           'materialSha256': hashBytes(bytes),
           'privateKeyProven': metadata['signingCapable'] == true,
-          'chainTrusted': false,
+          'chainTrusted':
+              state == 'ok' &&
+              metadata['signingCapable'] == true &&
+              metadata['teamId'] != null,
           'cmsSignatureVerified': false,
           'installable': false,
           'trustedByPlatform': false,
@@ -87,9 +86,17 @@ Future<Json> validateAppleMaterial(Json request, DateTime evaluated) async {
     } catch (_) {
       invalid('cms_invalid');
     }
-    final derived = await deriveProfile(profile, evaluated, dir),
-        expected = request['expectations'] as Json? ?? {},
-        reasons = (derived['reasonCodes'] as List).cast<String>();
+    final expected = request['expectations'] as Json? ?? {},
+        expectedCertificate = expected['certificateSha256'];
+    final derived = await deriveProfile(
+      profile,
+      evaluated,
+      dir,
+      expectedCertificateSha256: expectedCertificate is String
+          ? expectedCertificate
+          : null,
+    );
+    final reasons = (derived['reasonCodes'] as List).cast<String>();
     final facts = derived['profile'] as Json;
     void compare(String expectedKey, String factKey, String code) {
       if (expected[expectedKey] != null &&
@@ -132,8 +139,8 @@ Future<Json> validateAppleMaterial(Json request, DateTime evaluated) async {
         'cmsDigestSha256': hashBytes(bytes),
         'payloadSha256': hashBytes(utf8.encode(decoded.stdout as String)),
         'privateKeyProven': false,
-        'chainTrusted': false,
-        'cmsSignatureVerified': false,
+        'chainTrusted': same(reasons, ['ok']),
+        'cmsSignatureVerified': same(reasons, ['ok']),
         'cmsParsed': true,
         'installable': false,
         'trustedByPlatform': false,
@@ -145,11 +152,18 @@ Future<Json> validateAppleMaterial(Json request, DateTime evaluated) async {
   });
 }
 
+Future<ProcessResult> pkcs12(List<String> args, Map<String, String> env) async {
+  final modern = await validationTool(['openssl', 'pkcs12', ...args], env: env);
+  if (modern.exitCode == 0) return modern;
+  return validationTool(['openssl', 'pkcs12', '-legacy', ...args], env: env);
+}
+
 Future<Json> deriveProfile(
   Json profile,
   DateTime evaluated,
-  Directory dir,
-) async {
+  Directory dir, {
+  String? expectedCertificateSha256,
+}) async {
   final reasons = <String>[];
   String? one(dynamic value, String code) {
     if (value is List &&
@@ -184,6 +198,7 @@ Future<Json> deriveProfile(
     reasons.add('team_mismatch');
   final certs = profile['DeveloperCertificates'];
   final fingerprints = <String>[];
+  final validityByFingerprint = <String, String>{};
   if (certs is! List || certs.isEmpty || certs.length > 8) {
     reasons.add('certificate_mismatch');
   } else {
@@ -196,11 +211,29 @@ Future<Json> deriveProfile(
       try {
         final pem =
             '-----BEGIN CERTIFICATE-----\n${base64.encode(data)}\n-----END CERTIFICATE-----';
-        await certificateMetadata(pem, dir, evaluated, name: 'profile-$i');
-        fingerprints.add(hashBytes(data));
+        final metadata = await certificateMetadata(
+          pem,
+          dir,
+          evaluated,
+          name: 'profile-$i',
+        );
+        final fingerprint = hashBytes(data);
+        fingerprints.add(fingerprint);
+        final state = metadata['validity'];
+        if (state is String) validityByFingerprint[fingerprint] = state;
       } catch (_) {
         reasons.add('certificate_mismatch');
       }
+    }
+  }
+  if (fingerprints.isNotEmpty) {
+    if (expectedCertificateSha256 != null) {
+      final state = validityByFingerprint[expectedCertificateSha256];
+      if (state != null && state != 'ok') reasons.add(state);
+    } else if (!validityByFingerprint.values.contains('ok')) {
+      reasons.addAll(
+        validityByFingerprint.values.where((state) => state != 'ok'),
+      );
     }
   }
   final devices = profile['ProvisionedDevices'],

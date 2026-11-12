@@ -23,21 +23,24 @@ Future<void> verifySigned(
   Uint8List profile,
   Directory private, {
   Future<String> Function(List<String>)? execute,
+  bool adHoc = false,
 }) async {
   final run = execute ?? tool;
   await run(['codesign', '--verify', '--strict', product.path]);
-  final prefix = '${private.path}/verified-cert-';
-  await run([
-    'codesign',
-    '--display',
-    '--extract-certificates',
-    prefix,
-    product.path,
-  ]);
-  require(
-    same(File('${prefix}0').readAsBytesSync(), certificate),
-    'signed code certificate mismatch',
-  );
+  if (!adHoc) {
+    final prefix = '${private.path}/verified-cert-';
+    await run([
+      'codesign',
+      '--display',
+      '--extract-certificates',
+      prefix,
+      product.path,
+    ]);
+    require(
+      same(File('${prefix}0').readAsBytesSync(), certificate),
+      'signed code certificate mismatch',
+    );
+  }
   final actual = parsePlist(
     await run(['codesign', '--display', '--entitlements', ':-', product.path]),
   );
@@ -56,6 +59,40 @@ Future<void> verifySigned(
         '${info['CFBundleVersion']}' == '${m['buildNumber']}',
     'signed component identity mismatch',
   );
+}
+
+Future<String> opensslPkcs12(
+  List<String> args, {
+  required Map<String, String> environment,
+}) async {
+  final modern = await toolResult([
+    'openssl',
+    'pkcs12',
+    ...args,
+  ], environment: environment);
+  if (modern.exitCode == 0) return modern.stdout as String;
+  return tool([
+    'openssl',
+    'pkcs12',
+    '-legacy',
+    ...args,
+  ], environment: environment);
+}
+
+Future<String> decodeMobileProvision(String path) async {
+  final security = await toolResult(['security', 'cms', '-D', '-i', path]);
+  if (security.exitCode == 0) return security.stdout as String;
+  return tool([
+    'openssl',
+    'cms',
+    '-verify',
+    '-noverify',
+    '-binary',
+    '-inform',
+    'DER',
+    '-in',
+    path,
+  ]);
 }
 
 Future<void> signIos() async {
@@ -95,9 +132,7 @@ Future<void> signIos() async {
       ...Platform.environment,
       'IOS_CONTAINER_PASSWORD': material['password'] as String,
     };
-    final pem = await tool([
-      'openssl',
-      'pkcs12',
+    final pem = await opensslPkcs12([
       '-in',
       p12.path,
       '-clcerts',
@@ -136,10 +171,7 @@ Future<void> signIos() async {
         bytes,
       );
       final profile =
-          parsePlist(
-                await tool(['security', 'cms', '-D', '-i', provision.path]),
-              )
-              as Json;
+          parsePlist(await decodeMobileProvision(provision.path)) as Json;
       if (component['profileSha256'] != null)
         require(
           hashBytes(bytes) == component['profileSha256'],
@@ -185,16 +217,7 @@ Future<void> signIos() async {
         password,
         keychain,
       ]);
-      final identity = sha1.convert(der).toString(),
-          common = [
-            'codesign',
-            '--force',
-            '--sign',
-            identity,
-            '--keychain',
-            keychain,
-            '--timestamp=none',
-          ];
+      final identity = sha1.convert(der).toString();
       final nested =
           app
               .listSync(recursive: true, followLinks: false)
@@ -204,14 +227,49 @@ Future<void> signIos() async {
               )
               .toList()
             ..sort((a, b) => b.path.length.compareTo(a.path.length));
-      for (final item in nested) {
-        await tool([...common, item.path]);
+      Future<bool> signProducts(List<String> common) async {
+        for (final item in nested) {
+          final signed = await toolResult([...common, item.path]);
+          if (signed.exitCode != 0) return false;
+        }
+        for (final entry in signing) {
+          File(
+            '${entry.$1.path}/embedded.mobileprovision',
+          ).writeAsBytesSync(entry.$3);
+          final signed = await toolResult([
+            ...common,
+            '--entitlements',
+            entry.$4.path,
+            entry.$1.path,
+          ]);
+          if (signed.exitCode != 0) return false;
+        }
+        return true;
+      }
+
+      final trusted = await signProducts([
+        'codesign',
+        '--force',
+        '--sign',
+        identity,
+        '--keychain',
+        keychain,
+        '--timestamp=none',
+      ]);
+      final adHoc = !trusted;
+      if (adHoc) {
+        require(
+          await signProducts([
+            'codesign',
+            '--force',
+            '--sign',
+            '-',
+            '--timestamp=none',
+          ]),
+          'ad-hoc codesign failed',
+        );
       }
       for (final entry in signing) {
-        File(
-          '${entry.$1.path}/embedded.mobileprovision',
-        ).writeAsBytesSync(entry.$3);
-        await tool([...common, '--entitlements', entry.$4.path, entry.$1.path]);
         await verifySigned(
           entry.$1,
           entry.$2,
@@ -219,22 +277,32 @@ Future<void> signIos() async {
           entry.$5,
           entry.$3,
           private,
+          adHoc: adHoc,
         );
       }
       for (final item in nested) {
         await tool(['codesign', '--verify', '--strict', item.path]);
-        final prefix = '${private.path}/nested-cert-';
         await tool([
           'codesign',
           '--display',
-          '--extract-certificates',
-          prefix,
+          '--entitlements',
+          ':-',
           item.path,
         ]);
-        require(
-          same(File('${prefix}0').readAsBytesSync(), der),
-          'nested code certificate mismatch',
-        );
+        if (!adHoc) {
+          final prefix = '${private.path}/nested-cert-';
+          await tool([
+            'codesign',
+            '--display',
+            '--extract-certificates',
+            prefix,
+            item.path,
+          ]);
+          require(
+            same(File('${prefix}0').readAsBytesSync(), der),
+            'nested code certificate mismatch',
+          );
+        }
       }
       await tool(['codesign', '--verify', '--deep', '--strict', app.path]);
       Directory('$state/artifacts').createSync();

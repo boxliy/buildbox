@@ -415,5 +415,26 @@ Future<void> packageIos(String buildDirectory, String output, Json spec) async {
     }
     await projectPrivacy(product, selected);
   }
+  stripCompileSignatures(app);
   zipTree(app, output, prefix: 'Payload/${app.path.split('/').last}/');
+}
+
+void stripCompileSignatures(Directory app) {
+  final leftovers =
+      app
+          .listSync(recursive: true, followLinks: false)
+          .where(
+            (entry) =>
+                entry.path.split('/').last == '_CodeSignature' ||
+                entry.path.split('/').last == 'embedded.mobileprovision',
+          )
+          .toList()
+        ..sort((a, b) => b.path.length.compareTo(a.path.length));
+  for (final entry in leftovers) {
+    if (entry is Directory) {
+      entry.deleteSync(recursive: true);
+    } else if (entry is File) {
+      entry.deleteSync();
+    }
+  }
 }

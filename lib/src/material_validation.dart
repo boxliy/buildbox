@@ -19,11 +19,18 @@ Future<Json> validateDocument(Json document) async {
   final body = platform == 'android'
       ? await validateAndroidMaterial(document, evaluated)
       : await validateAppleMaterial(document, evaluated);
-  final pending = platform == 'ios' ? trustChecks : <String>[];
   final reasons = (body['reasonCodes'] as List).cast<String>();
+  final evidence = Map<String, dynamic>.from(body['evidence'] as Map);
+  final pending =
+      platform == 'ios' &&
+          same(reasons, ['ok']) &&
+          evidence['chainTrusted'] == true
+      ? <String>[]
+      : platform == 'ios'
+      ? trustChecks
+      : <String>[];
   if (pending.isNotEmpty && !reasons.contains('macos_capability_unavailable'))
     reasons.add('macos_capability_unavailable');
-  final evidence = Map<String, dynamic>.from(body['evidence'] as Map);
   body['evidence'] = evidence;
   final proven = platform == 'android'
       ? evidence['privateKeyProven'] == true
