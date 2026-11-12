@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Prepare every run in this dispatch from one shared source checkout.
+set -Eeuo pipefail
+set +x
+
+die() {
+  printf 'prepare-chunk: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ -n "${BUILDBOX_RUN_ID:-}" ]] || die 'BUILDBOX_RUN_ID is required'
+[[ "$BUILDBOX_RUN_ID" =~ ^[0-9]+$ ]] || die 'BUILDBOX_RUN_ID must be a platform run id'
+[[ -n "${ALLOWED_SOURCE:-}" ]] || die 'ALLOWED_SOURCE is required'
+[[ -n "${RUNNER_TEMP:-}" ]] || die 'RUNNER_TEMP is required'
+[[ -n "${GITHUB_WORKSPACE:-}" ]] || die 'GITHUB_WORKSPACE is required'
+[[ -n "${GITHUB_ENV:-}" ]] || die 'GITHUB_ENV is required'
+[[ -n "${GITHUB_OUTPUT:-}" ]] || die 'GITHUB_OUTPUT is required'
+[[ -n "${HAWK_BASE_URL:-}" ]] || die 'HAWK_BASE_URL is required'
+[[ -d "$GITHUB_WORKSPACE/aviary-source" ]] || die 'shared source checkout is missing'
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/curl_retry.sh
+source "$SCRIPT_DIR/lib/curl_retry.sh"
+# shellcheck source=lib/chunk_ids.sh
+source "$SCRIPT_DIR/lib/chunk_ids.sh"
+chunk_ids
+ids=("${CHUNK_IDS[@]}")
+
+PRIMARY_STATE="$RUNNER_TEMP/buildbox/$BUILDBOX_RUN_ID"
+[[ -f "$PRIMARY_STATE/spec.env" ]] || die 'primary build spec was not loaded'
+# shellcheck disable=SC1090
+source "$PRIMARY_STATE/spec.env"
+PRIMARY_CHECKOUT=$BUILDBOX_CHECKOUT_REPOSITORY
+PRIMARY_REF=$BUILDBOX_SOURCE_REF
+[[ "$PRIMARY_CHECKOUT" == "$ALLOWED_SOURCE" ]] || die 'primary source repository is not allowed'
+
+COMPILE_ROOT="$RUNNER_TEMP/compile-input"
+SIGN_ROOT="$RUNNER_TEMP/sign-input"
+rm -rf "$COMPILE_ROOT" "$SIGN_ROOT"
+mkdir -p "$COMPILE_ROOT" "$SIGN_ROOT"
+
+REQUESTED_MATRIX='[]'
+ANDROID_MATRIX='[]'
+IOS_MATRIX='[]'
+FAILED_MATRIX='[]'
+MULTIPLE=0
+[[ ${#ids[@]} -gt 1 ]] && MULTIPLE=1
+FAILURES=0
+
+prepare_one() {
+  local id=$1
+  local state="$RUNNER_TEMP/buildbox/$id"
+  local platform version base
+  mkdir -p "$state" || return 1
+  export BUILDBOX_RUN_ID=$id
+  export BUILDBOX_STATE_DIR=$state
+  if [[ ! -f "$state/spec.json" ]]; then
+    "$SCRIPT_DIR/exchange-stage" prepare || return 1
+    # shellcheck disable=SC1090
+    set -a
+    source "$GITHUB_ENV" || return 1
+    set +a
+    # GITHUB_ENV carries the primary state directory. Restore the member before load.
+    export BUILDBOX_RUN_ID=$id
+    export BUILDBOX_STATE_DIR=$state
+    "$SCRIPT_DIR/load-build-spec" "$id" || return 1
+  fi
+  export BUILDBOX_RUN_ID=$id
+  export BUILDBOX_STATE_DIR=$state
+  # shellcheck disable=SC1090
+  source "$state/spec.env" || return 1
+  [[ "$BUILDBOX_CHECKOUT_REPOSITORY" == "$ALLOWED_SOURCE" ]] || return 1
+  [[ "$BUILDBOX_CHECKOUT_REPOSITORY" == "$PRIMARY_CHECKOUT" ]] || return 1
+  [[ "$BUILDBOX_SOURCE_REF" == "$PRIMARY_REF" ]] || return 1
+  platform=$(jq -er '.config.platform | select(. == "android" or . == "ios")' "$state/spec.json") || return 1
+  version=$(GITHUB_OUTPUT=/dev/null "$SCRIPT_DIR/resolve-flutter-version" "$GITHUB_WORKSPACE/aviary-source" "$state/spec.json") || return 1
+  "$SCRIPT_DIR/export-job-inputs" compile "$COMPILE_ROOT/$id" || return 1
+  "$SCRIPT_DIR/export-job-inputs" sign "$SIGN_ROOT/$id" || return 1
+  base=${HAWK_BASE_URL%/}
+  curl_retry --fail --silent --show-error --request POST \
+    --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
+    "$base/api/v1/buildbox/runs/$id/prepare-complete" || return 1
+  if [[ "$platform" == android ]]; then
+    ANDROID_MATRIX=$(jq -c --arg id "$id" --arg version "$version" '. + [{build_run_id:$id, flutter_version:$version}]' <<<"$ANDROID_MATRIX") || return 1
+  else
+    IOS_MATRIX=$(jq -c --arg id "$id" --arg version "$version" '. + [{build_run_id:$id, flutter_version:$version}]' <<<"$IOS_MATRIX") || return 1
+  fi
+}
+
+for id in "${ids[@]}"; do
+  REQUESTED_MATRIX=$(jq -c --arg id "$id" '. + [{build_run_id:$id}]' <<<"$REQUESTED_MATRIX")
+  if ! prepare_one "$id"; then
+    FAILURES=$((FAILURES + 1))
+    FAILED_MATRIX=$(jq -c --arg id "$id" '. + [{build_run_id:$id}]' <<<"$FAILED_MATRIX")
+    # A sibling failure is finalized by finalize.yml. Prepare must not mint that credential.
+    if [[ "$MULTIPLE" -eq 1 ]]; then
+      continue
+    fi
+    die "prepare failed for run $id"
+  fi
+done
+
+if [[ "$MULTIPLE" -eq 0 && "$FAILURES" -ne 0 ]]; then
+  die 'prepare failed before compile'
+fi
+
+has_android=false
+has_ios=false
+has_failed=false
+[[ $(jq 'length' <<<"$ANDROID_MATRIX") -gt 0 ]] && has_android=true
+[[ $(jq 'length' <<<"$IOS_MATRIX") -gt 0 ]] && has_ios=true
+[[ $(jq 'length' <<<"$FAILED_MATRIX") -gt 0 ]] && has_failed=true
+{
+  printf 'has_android=%s\n' "$has_android"
+  printf 'has_ios=%s\n' "$has_ios"
+  printf 'has_failed=%s\n' "$has_failed"
+  printf 'android_matrix=%s\n' "$ANDROID_MATRIX"
+  printf 'ios_matrix=%s\n' "$IOS_MATRIX"
+  printf 'failed_matrix=%s\n' "$FAILED_MATRIX"
+  printf 'requested_matrix=%s\n' "$REQUESTED_MATRIX"
+} >>"$GITHUB_OUTPUT"

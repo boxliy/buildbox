@@ -9,6 +9,11 @@ on:
         description: Delivered Buildbox tools revision
         required: true
         type: string
+      build_run_ids:
+        description: Comma-separated Hawk platform workflow run ids in this chunk
+        required: false
+        type: string
+        default: ''
     secrets:
       HAWK_BASE_URL:
         required: true
@@ -25,13 +30,27 @@ on:
         value: ${{ jobs.prepare.outputs.platform }}
       failure_reason:
         value: ${{ jobs.prepare.outputs.failure_reason }}
+      has_android:
+        value: ${{ jobs.prepare.outputs.has_android }}
+      has_ios:
+        value: ${{ jobs.prepare.outputs.has_ios }}
+      android_matrix:
+        value: ${{ jobs.prepare.outputs.android_matrix }}
+      ios_matrix:
+        value: ${{ jobs.prepare.outputs.ios_matrix }}
+      requested_matrix:
+        value: ${{ jobs.prepare.outputs.requested_matrix }}
+      has_failed:
+        value: ${{ jobs.prepare.outputs.has_failed }}
+      failed_matrix:
+        value: ${{ jobs.prepare.outputs.failed_matrix }}
 permissions:
   contents: read
   id-token: write
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -41,12 +60,19 @@ jobs:
       flutter_version: ${{ steps.flutter.outputs.flutter_version }}
       platform: ${{ steps.platform.outputs.platform }}
       failure_reason: ${{ steps.failure.outputs.reason }}
+      has_android: ${{ steps.matrix.outputs.has_android }}
+      has_ios: ${{ steps.matrix.outputs.has_ios }}
+      android_matrix: ${{ steps.matrix.outputs.android_matrix }}
+      ios_matrix: ${{ steps.matrix.outputs.ios_matrix }}
+      requested_matrix: ${{ steps.matrix.outputs.requested_matrix }}
+      has_failed: ${{ steps.matrix.outputs.has_failed }}
+      failed_matrix: ${{ steps.matrix.outputs.failed_matrix }}
     env:
       BUILDBOX_RUN_ID: ${{ inputs.build_run_id }}
       BUILDBOX_GITHUB_RUN_ID: ${{ github.run_id }}
     steps:
       - name: Initialize isolated state directory
-        run: echo "BUILDBOX_STATE_DIR=$RUNNER_TEMP/buildbox" >>"$GITHUB_ENV"
+        run: echo "BUILDBOX_STATE_DIR=$RUNNER_TEMP/buildbox/$BUILDBOX_RUN_ID" >>"$GITHUB_ENV"
       - name: Checkout buildbox
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -121,8 +147,14 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-      - name: Export compile inputs
-        run: scripts/export-job-inputs compile ${{ runner.temp }}/compile-input
+      - name: Prepare chunk runs
+        id: matrix
+        env:
+          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
+          HAWK_OIDC_AUDIENCE: ${{ secrets.HAWK_OIDC_AUDIENCE }}
+          ALLOWED_SOURCE: ${{ vars.AVIARY_SOURCE_REPOSITORY || 'boxliy/aviary' }}
+          BUILD_RUN_IDS: ${{ inputs.build_run_ids }}
+        run: scripts/prepare-chunk
 
       - name: Preserve compile inputs
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
@@ -133,9 +165,6 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-      - name: Export sign inputs
-        run: scripts/export-job-inputs sign ${{ runner.temp }}/sign-input
-
       - name: Preserve sign inputs
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
@@ -144,14 +173,6 @@ jobs:
           include-hidden-files: true
           retention-days: 1
           if-no-files-found: error
-
-      - name: Record immutable input handoff
-        env:
-          HAWK_BASE_URL: ${{ secrets.HAWK_BASE_URL }}
-        run: |
-          curl --fail --silent --show-error --request POST \
-            --header "Authorization: Bearer $HAWK_STAGE_TOKEN" \
-            "${HAWK_BASE_URL%/}/api/v1/buildbox/runs/$BUILDBOX_RUN_ID/prepare-complete"
 
       # The reason is a job output. A later runner cannot read this job's temp directory.
       - name: Record prepare failure

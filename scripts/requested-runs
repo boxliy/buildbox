@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Resolve requested chunk run ids without calling Hawk.
+# This stays outside prepare so a shared prepare failure can still finalize every member.
+set -Eeuo pipefail
+set +x
+
+die() {
+  printf 'requested-runs: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ -n "${GITHUB_OUTPUT:-}" ]] || die 'GITHUB_OUTPUT is required'
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/chunk_ids.sh
+source "$SCRIPT_DIR/lib/chunk_ids.sh"
+chunk_ids
+
+REQUESTED_MATRIX='[]'
+for id in "${CHUNK_IDS[@]}"; do
+  REQUESTED_MATRIX=$(jq -c --arg id "$id" '. + [{build_run_id:$id}]' <<<"$REQUESTED_MATRIX")
+done
+printf 'requested_matrix=%s\n' "$REQUESTED_MATRIX" >>"$GITHUB_OUTPUT"
