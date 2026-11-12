@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Report one chunk member with a finalize credential so a sibling prepare can continue.
+set -Eeuo pipefail
+set +x
+
+usage() {
+  printf 'usage: %s <run-id>\n' "${0##*/}" >&2
+}
+
+die() {
+  printf 'report-chunk-failure: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ $# -eq 1 ]] || { usage; exit 64; }
+RUN_ID=$1
+[[ "$RUN_ID" =~ ^[0-9]+$ ]] || die 'run id must be a platform run id'
+[[ -n "${GITHUB_ENV:-}" ]] || die 'GITHUB_ENV is required'
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export BUILDBOX_RUN_ID=$RUN_ID
+"$SCRIPT_DIR/exchange-stage" finalize
+# shellcheck disable=SC1090
+set -a
+source "$GITHUB_ENV"
+set +a
+export BUILDBOX_RUN_ID=$RUN_ID
+export HAWK_CALLBACK_STAGE=finalize
+"$SCRIPT_DIR/report-result" failed 'prepare failed before compile'
