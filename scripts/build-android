@@ -12,6 +12,8 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/lib/targets.sh"
 # shellcheck source=lib/artifact.sh
 source "$SCRIPT_DIR/lib/artifact.sh"
+# shellcheck source=lib/android_ndk.sh
+source "$SCRIPT_DIR/lib/android_ndk.sh"
 
 die() {
   printf 'build-android: %s\n' "$*" >&2
@@ -236,6 +238,8 @@ else
   require_command flutter
   FLUTTER_CMD=(flutter)
 fi
+
+ensure_android_ndk "$SWAN_DIR" || die 'failed to pre-install Android NDK via sdkmanager'
 
 while IFS= read -r target; do
   case "$target" in

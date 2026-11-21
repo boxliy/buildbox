@@ -7,6 +7,9 @@ state=${BUILDBOX_STATE_DIR:?}
 source_root=${BUILDBOX_SOURCE_ROOT:-${GITHUB_WORKSPACE:?}/aviary-source}
 [[ "$(uname -s)" == Darwin ]] || { echo 'iOS compilation requires macOS' >&2; exit 1; }
 [[ -z "${HAWK_STAGE_TOKEN+x}" && -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN+x}" ]] || { echo 'compile runner must not carry stage credentials' >&2; exit 1; }
+# shellcheck source=lib/mirrors.sh
+source "$script_dir/lib/mirrors.sh"
+configure_source_mirrors "$source_root"
 "$script_dir/verify-compile-inputs"
 jq -e '.config.platform == "ios" and .config.targets == ["ipa"]' "$state/spec.json" >/dev/null
 expected_xcode=$(jq -r '.config.frozenInputs.xcodeBuild // empty' "$state/spec.json")
