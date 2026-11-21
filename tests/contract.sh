@@ -6,6 +6,8 @@ TMP_DIR=$(mktemp -d)
 
 export BUILDBOX_TEST_DART=${BUILDBOX_TEST_DART:-$(command -v dart)}
 export BUILDBOX_TEST_ROOT="$ROOT"
+export GIT_CONFIG_GLOBAL="$TMP_DIR/global.gitconfig"
+unset ANDROID_HOME ANDROID_SDK_ROOT FLUTTER_ROOT
 export PATH="$ROOT/tests/bin:$PATH"
 export FIXTURE_DIR="$ROOT/tests/fixtures"
 export HAWK_BASE_URL='https://hawk.example'
@@ -628,6 +630,10 @@ fi
 if [[ "$1" == fetch && "$*" == *refs/heads/* && "${MOCK_BRANCH_OK:-1}" != 1 ]]; then
   exit 1
 fi
+if [[ "$1" == clone && "${MOCK_FAIL_ALL_CLONES:-}" == 1 ]]; then
+  mkdir -p "${*: -1}/objects/partial"
+  exit 1
+fi
 if [[ "$1" == clone && "${MOCK_FAIL_FIRST_CLONE:-}" == 1 && ! -e "${MOCK_GIT_LOG}.clone-failed" ]]; then
   : >"${MOCK_GIT_LOG}.clone-failed"
   exit 1
@@ -677,37 +683,8 @@ fi
 assert_file_contains "$MOCK_LOG" "fetch --filter=blob:none --force origin $BAD_SHA"
 assert_file_contains "$TMP_DIR/sha-mismatch.err" "source HEAD mismatch"
 
-MIRROR_REPO=$(mktemp -d)
-mkdir -p "$MIRROR_REPO/.git/refs" "$MIRROR_REPO/waterfowl"
-printf 'https://github.com/boxliy/nib.git\n' >"$MIRROR_REPO/waterfowl/pubspec.lock"
-: >"$MOCK_LOG"
-TOKEN_BASIC=$(printf 'x-access-token:%s' "source-token" | base64 | tr -d '\n')
-BUILDBOX_SOURCE_TOKEN=source-token MOCK_TAGS=v1.0.0 MOCK_GIT_LOG="$MOCK_LOG" PATH="$MOCK_BIN:/usr/bin:/bin" \
-  "$ROOT/scripts/checkout-source" "$MIRROR_REPO" latest >/dev/null
-assert_file_contains "$MOCK_LOG" "clone --bare --quiet https://github.com/boxliy/nib.git $MIRROR_REPO/.git/buildbox-mirrors/nib.git"
-assert_file_contains "$MOCK_LOG" "http.extraheader=AUTHORIZATION: basic ${TOKEN_BASIC} -C $MIRROR_REPO checkout --detach --quiet v1.0.0"
-if grep -F 'source-token@' "$MOCK_LOG" >/dev/null || grep -F 'https://source-token' "$MOCK_LOG" >/dev/null; then
-  printf 'source token was embedded in the nib mirror URL\n' >&2
-  exit 1
-fi
-unset BUILDBOX_SOURCE_TOKEN
-
-APP_REPO=$(mktemp -d)
-mkdir -p "$APP_REPO/.git/refs" "$APP_REPO/waterfowl"
-printf 'https://github.com/boxliy/nib.git\n' >"$APP_REPO/waterfowl/pubspec.lock"
-: >"$MOCK_LOG"
-APP_BASIC=$(printf 'x-access-token:%s' "aviary-app-token" | base64 | tr -d '\n')
-PAT_BASIC=$(printf 'x-access-token:%s' "dependency-token" | base64 | tr -d '\n')
-SOURCE_REPO_TOKEN=aviary-app-token BUILDBOX_SOURCE_TOKEN=dependency-token MOCK_FAIL_FIRST_CLONE=1 MOCK_TAGS=v1.0.0 MOCK_GIT_LOG="$MOCK_LOG" PATH="$MOCK_BIN:/usr/bin:/bin" \
-  "$ROOT/scripts/checkout-source" "$APP_REPO" latest >/dev/null
-assert_file_contains "$MOCK_LOG" "http.extraheader=AUTHORIZATION: basic ${APP_BASIC} -C $APP_REPO checkout --detach --quiet v1.0.0"
-assert_file_contains "$MOCK_LOG" "http.extraheader=AUTHORIZATION: basic ${APP_BASIC} clone --bare --quiet https://github.com/boxliy/nib.git"
-assert_file_contains "$MOCK_LOG" "http.extraheader=AUTHORIZATION: basic ${PAT_BASIC} clone --bare --quiet https://github.com/boxliy/nib.git $APP_REPO/.git/buildbox-mirrors/nib.git"
-if grep -F 'aviary-app-token@' "$MOCK_LOG" >/dev/null || grep -F 'dependency-token@' "$MOCK_LOG" >/dev/null || grep -F 'https://aviary-app-token' "$MOCK_LOG" >/dev/null || grep -F 'https://dependency-token' "$MOCK_LOG" >/dev/null; then
-  printf 'a credential was embedded in a git URL\n' >&2
-  exit 1
-fi
-unset SOURCE_REPO_TOKEN BUILDBOX_SOURCE_TOKEN MOCK_FAIL_FIRST_CLONE
+# shellcheck source=contract_mirrors_and_ndk.sh
+source "$ROOT/tests/contract_mirrors_and_ndk.sh"
 
 
 # A failed chunk member must not borrow the primary run's state or a prepare-job finalize credential.

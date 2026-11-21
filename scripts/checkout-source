@@ -3,6 +3,10 @@
 set -Eeuo pipefail
 set +x
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/mirrors.sh
+source "$SCRIPT_DIR/lib/mirrors.sh"
+
 usage() {
   printf 'usage: %s <checkout-dir> [source-ref]\n' "${0##*/}" >&2
 }
@@ -46,21 +50,24 @@ git_auth() {
   fi
 }
 
-# The App token is scoped to Aviary. Retry the private nib mirror with the
-# fallback token instead of letting that narrower credential win permanently.
-clone_nib_mirror() {
-  local dest=$1
-  local url=https://github.com/boxliy/nib.git
+# The App token is scoped to Aviary. Retry each private boxliy/* dependency
+# mirror with the fallback token instead of letting that narrower credential win.
+clone_repo_mirror() {
+  local repo_slug=$1
+  local dest=$2
+  local url="https://github.com/${repo_slug}.git"
   local primary=${SOURCE_REPO_TOKEN:-${BUILDBOX_SOURCE_TOKEN:-}}
   rm -rf "$dest"
-  mkdir -p "$(dirname "$dest")"
+  mkdir -p "$(dirname "$dest")" || return 1
   if git_with_token "$primary" clone --bare --quiet "$url" "$dest"; then
     return 0
   fi
   rm -rf "$dest"
   if [[ -n "${SOURCE_REPO_TOKEN:-}" && -n "${BUILDBOX_SOURCE_TOKEN:-}" && "$SOURCE_REPO_TOKEN" != "$BUILDBOX_SOURCE_TOKEN" ]]; then
-    git_with_token "$BUILDBOX_SOURCE_TOKEN" clone --bare --quiet "$url" "$dest"
-    return
+    if git_with_token "$BUILDBOX_SOURCE_TOKEN" clone --bare --quiet "$url" "$dest"; then
+      return 0
+    fi
+    rm -rf "$dest"
   fi
   return 1
 }
@@ -118,10 +125,17 @@ else
   if [[ -z "${RESOLVED_COMMIT:-}" ]]; then
     RESOLVED_COMMIT=$(git -C "$CHECKOUT" rev-parse --verify HEAD)
   fi
-  if [[ -f "$CHECKOUT/waterfowl/pubspec.lock" ]] &&
-    grep -F 'https://github.com/boxliy/nib.git' "$CHECKOUT/waterfowl/pubspec.lock" >/dev/null &&
-    [[ -n "${SOURCE_REPO_TOKEN:-}${BUILDBOX_SOURCE_TOKEN:-}" ]]; then
-    clone_nib_mirror "$CHECKOUT/.git/buildbox-mirrors/nib.git"
+  if [[ -n "${SOURCE_REPO_TOKEN:-}${BUILDBOX_SOURCE_TOKEN:-}" ]]; then
+    rm -rf "$CHECKOUT/.git/buildbox-mirrors"
+    discovered_repos=$(discover_private_git_repos "$CHECKOUT")
+    if [[ -n "$discovered_repos" ]]; then
+      while IFS= read -r mirror_repo; do
+        [[ -n "$mirror_repo" ]] || continue
+        if ! clone_repo_mirror "$mirror_repo" "$CHECKOUT/.git/buildbox-mirrors/${mirror_repo}.git"; then
+          die "failed to mirror private Git dependency: $mirror_repo"
+        fi
+      done <<<"$discovered_repos"
+    fi
   fi
 fi
 
